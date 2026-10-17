@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#121212"
+    android:fitsSystemWindows="true"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:id="@+id/header"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:background="#1C1C1C"
+        android:gravity="center"
+        android:orientation="horizontal">
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ADJM-MP4 "
+            android:textColor="#FFFFFF"
+            android:textSize="20sp" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Player"
+            android:textColor="#FFFFFF"
+            android:textSize="22sp"
+            android:textStyle="bold|italic" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/previewHolder"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+        <FrameLayout
+            android:id="@+id/previewBox"
+            android:layout_width="10dp"
+            android:layout_height="10dp"
+            android:layout_gravity="center"
+            android:background="#000000"
+            android:clipChildren="true">
+            <androidx.media3.ui.PlayerView
+                android:id="@+id/playerView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                app:surface_type="texture_view"
+                app:resize_mode="fit" />
+            <FrameLayout
+                android:id="@+id/layer"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clickable="true" />
+            <com.adjm.mp4player.GuideView
+                android:id="@+id/guide"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+        </FrameLayout>
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
+        <TextView android:id="@+id/btnFull" style="@style/Ctl" android:text="⛶" />
+        <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+        <TextView android:id="@+id/btnRatio" style="@style/Ctl" android:text="9:16" />
+        <TextView android:id="@+id/btnRes" style="@style/Ctl" android:text="720p" />
+        <TextView android:id="@+id/btnPlay" style="@style/Ctl" android:text="▶" android:textSize="24sp" />
+        <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+        <TextView android:id="@+id/btnUndo" style="@style/Ctl" android:text="↶" />
+        <TextView android:id="@+id/btnRedo" style="@style/Ctl" android:text="↷" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/editArea"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tvTime"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="14dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:text="00:00 / 00:00"
+            android:textColor="#CCCCCC"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="190dp"
+            android:orientation="horizontal">
+            <FrameLayout
+                android:id="@+id/coverBox"
+                android:layout_width="64dp"
+                android:layout_height="52dp"
+                android:layout_margin="6dp"
+                android:background="#2A2A2A">
+                <ImageView
+                    android:id="@+id/coverImg"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:scaleType="centerCrop" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:text="✎\nSampul"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp"
+                    android:shadowColor="#000000"
+                    android:shadowRadius="4" />
+            </FrameLayout>
+            <FrameLayout
+                android:id="@+id/timelineHolder"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1" />
+        </LinearLayout>
+
+        <HorizontalScrollView
+            android:id="@+id/panelScroll"
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:background="#1C1C1C"
+            android:scrollbars="none"
+            android:visibility="gone">
+            <LinearLayout
+                android:id="@+id/panelRow"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp" />
+        </HorizontalScrollView>
+
+        <LinearLayout
+            android:id="@+id/bottomBar"
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:background="#1C1C1C"
+            android:orientation="horizontal">
+            <TextView android:id="@+id/bEdit" style="@style/Tool" android:text="✂\nEdit" />
+            <TextView android:id="@+id/bAudio" style="@style/Tool" android:text="♪\nAudio" />
+            <TextView android:id="@+id/bText" style="@style/Tool" android:text="T\nTeks" />
+            <TextView android:id="@+id/bFx" style="@style/Tool" android:text="✦\nEfek" />
+            <TextView android:id="@+id/bOverlay" style="@style/Tool" android:text="▣\nOverlay" />
+            <TextView
+                android:id="@+id/bSave"
+                style="@style/Tool"
+                android:layout_margin="4dp"
+                android:background="#FF1A1A"
+                android:text="💾\nSave"
+                android:textColor="#000000"
+                android:textStyle="bold" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

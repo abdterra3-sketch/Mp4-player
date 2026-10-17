@@ -31,37 +31,40 @@ class ThumbLoader(private val ctx: Context) {
     private val cache = LruCache<String, Bitmap>(400)
     private val pending = HashSet<String>()                 // hanya dipakai di thread utama
     private val queue = java.util.concurrent.LinkedBlockingDeque<Job>()
-    private val retrievers = HashMap<String, MediaMetadataRetriever>()   // hanya dipakai di thread pekerja
     private val main = Handler(Looper.getMainLooper())
 
     init {
-        val worker = Thread {
-            while (true) {
-                val job = try { queue.takeLast() } catch (_: InterruptedException) { break }   // terbaru dikerjakan dulu
-                var bmp: Bitmap? = cache.get(job.key)
-                if (bmp == null) {
-                    try {
-                        val r = retrievers.getOrPut(job.uri.toString()) {
-                            MediaMetadataRetriever().apply { setDataSource(ctx, job.uri) }
+        repeat(2) {
+            val worker = Thread {
+                while (true) {
+                    val job = try { queue.takeLast() } catch (_: InterruptedException) { break }   // terbaru dikerjakan dulu
+                    var bmp: Bitmap? = cache.get(job.key)
+                    if (bmp == null) {
+                        // retriever baru untuk setiap frame supaya tiap detik menghasilkan gambar yang berbeda
+                        val r = MediaMetadataRetriever()
+                        try {
+                            r.setDataSource(ctx, job.uri)
+                            val f = r.getFrameAtTime(job.ms * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
+                            if (f != null) {
+                                val h = 120
+                                val w = max(1, f.width * h / f.height)
+                                bmp = Bitmap.createScaledBitmap(f, w, h, true)
+                            }
+                        } catch (_: Exception) {
+                        } finally {
+                            try { r.release() } catch (_: Exception) {}
                         }
-                        val f = r.getFrameAtTime(job.ms * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
-                        if (f != null) {
-                            val h = 120
-                            val w = max(1, f.width * h / f.height)
-                            bmp = Bitmap.createScaledBitmap(f, w, h, true)
-                        }
-                    } catch (_: Exception) {
+                    }
+                    val result = bmp
+                    main.post {
+                        pending.remove(job.key)
+                        if (result != null) { cache.put(job.key, result); job.cb() }
                     }
                 }
-                val result = bmp
-                main.post {
-                    pending.remove(job.key)
-                    if (result != null) { cache.put(job.key, result); job.cb() }
-                }
             }
+            worker.isDaemon = true
+            worker.start()
         }
-        worker.isDaemon = true
-        worker.start()
     }
 
     fun get(uri: Uri, ms: Long, onLoaded: () -> Unit): Bitmap? {

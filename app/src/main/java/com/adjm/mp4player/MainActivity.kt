@@ -448,9 +448,18 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
 
     private fun deleteSelected() {
         val i = timeline.selIdx
-        when (timeline.selKind) {
-            TimelineView.VIDEO -> if (i in proj.clips.indices) { pushUndo(); proj.clips.removeAt(i) } else return
-            TimelineView.TEXT -> if (i in proj.texts.indices) { pushUndo(); proj.texts.removeAt(i) } else return
-            TimelineView.AUDIO -> if (i in proj.audios.indices) { pushUndo(); proj.audios.removeAt(i) } else return
-            TimelineView.OVERLAY -> if (i in proj.overlays.indices) { pushUndo(); proj.overlays.removeAt(i) } else return
-            else 
+        val kind = timeline.selKind
+        val valid = when (kind) {
+            TimelineView.VIDEO -> i in proj.clips.indices
+            TimelineView.TEXT -> i in proj.texts.indices
+            TimelineView.AUDIO -> i in proj.audios.indices
+            TimelineView.OVERLAY -> i in proj.overlays.indices
+            else -> false
+        }
+        if (!valid) {
+            toast("Pilih blok di timeline dulu")
+            return
+        }
+        pushUndo()
+        when (kind) {
+            TimelineView.VIDEO -

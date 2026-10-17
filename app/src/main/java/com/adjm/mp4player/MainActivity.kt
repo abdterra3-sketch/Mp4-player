@@ -462,4 +462,283 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         }
         pushUndo()
         when (kind) {
-            TimelineView.VIDEO -
+            TimelineView.VIDEO -> proj.clips.removeAt(i)
+            TimelineView.TEXT -> proj.texts.removeAt(i)
+            TimelineView.AUDIO -> proj.audios.removeAt(i)
+            else -> proj.overlays.removeAt(i)
+        }
+        timeline.clearSelection()
+        afterChange()
+    }
+
+    // ---------- Panel mode ----------
+    private fun pbtn(label: String, onClick: () -> Unit) {
+        val t = TextView(this)
+        t.text = label; t.setTextColor(Color.WHITE); t.textSize = 13f; t.gravity = Gravity.CENTER
+        t.setPadding(dp(14f), dp(10f), dp(14f), dp(10f))
+        t.background = GradientDrawable().apply { setColor(0xFF2E2E2E.toInt()); cornerRadius = dp(8f).toFloat() }
+        t.setOnClickListener { onClick() }
+        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.setMargins(dp(4f), dp(6f), dp(4f), dp(6f))
+        panelRow.addView(t, lp)
+    }
+
+    private fun showMode(m: Int) {
+        mode = m
+        if (m == 0) { panelScroll.visibility = View.GONE; bottomBar.visibility = View.VISIBLE; return }
+        bottomBar.visibility = View.GONE; panelScroll.visibility = View.VISIBLE
+        panelRow.removeAllViews()
+        pbtn("⬅ Kembali") { showMode(0) }
+        when (m) {
+            1 -> {
+                pbtn("✂ Potong") { splitAtPlayhead() }
+                pbtn("🗑 Hapus") { deleteSelected() }
+                pbtn("⟲ Reset zoom") { clipAt(curMs)?.let { it.scale = 1f; it.tx = 0f; it.ty = 0f }; applyClipTransform() }
+                pbtn("+ Video") { pickVideo.launch("video/*") }
+            }
+            2 -> {
+                pbtn("+ Audio") { pickAudio.launch("audio/*") }
+                pbtn("✂ Potong") { splitAtPlayhead() }
+                pbtn("🗑 Hapus") { deleteSelected() }
+            }
+            3 -> {
+                pbtn("+ Teks") { addText() }
+                pbtn("✎ Edit") { editText() }
+                pbtn("✂ Potong") { splitAtPlayhead() }
+                pbtn("🗑 Hapus") { deleteSelected() }
+                pbtn("A+") { resizeSelected(1.1f) }
+                pbtn("A−") { resizeSelected(0.9f) }
+                addNudge()
+            }
+            4 -> effectNames.forEachIndexed { i, n ->
+                pbtn((if (i == effectIdx) "✔ " else "") + n) { effectIdx = i; applyPreviewEffects(); showMode(4) }
+            }
+            5 -> {
+                pbtn("+ Overlay") { pickOverlay.launch("image/*") }
+                pbtn("✂ Potong") { splitAtPlayhead() }
+                pbtn("🗑 Hapus") { deleteSelected() }
+                pbtn("+ Besar") { resizeSelected(1.15f) }
+                pbtn("− Kecil") { resizeSelected(0.87f) }
+                addNudge()
+            }
+        }
+    }
+
+    private fun addNudge() {
+        pbtn("◀") { nudge(-0.01f, 0f) }
+        pbtn("▶") { nudge(0.01f, 0f) }
+        pbtn("▲") { nudge(0f, -0.01f) }
+        pbtn("▼") { nudge(0f, 0.01f) }
+        pbtn("↔ Tengah") { setCenter(true, false) }
+        pbtn("↕ Tengah") { setCenter(false, true) }
+        pbtn("⌖ Pusat") { setCenter(true, true) }
+    }
+
+    private fun nudge(dx: Float, dy: Float) {
+        when (timeline.selKind) {
+            TimelineView.TEXT -> proj.texts.getOrNull(timeline.selIdx)?.let { it.nx = (it.nx + dx).coerceIn(0f, 1f); it.ny = (it.ny + dy).coerceIn(0f, 1f) }
+            TimelineView.OVERLAY -> proj.overlays.getOrNull(timeline.selIdx)?.let { it.nx = (it.nx + dx).coerceIn(0f, 1f); it.ny = (it.ny + dy).coerceIn(0f, 1f) }
+            else -> toast("Pilih teks/overlay dulu")
+        }
+        syncOverlays()
+    }
+
+    private fun setCenter(x: Boolean, y: Boolean) {
+        when (timeline.selKind) {
+            TimelineView.TEXT -> proj.texts.getOrNull(timeline.selIdx)?.let { if (x) it.nx = 0.5f; if (y) it.ny = 0.5f }
+            TimelineView.OVERLAY -> proj.overlays.getOrNull(timeline.selIdx)?.let { if (x) it.nx = 0.5f; if (y) it.ny = 0.5f }
+            else -> toast("Pilih teks/overlay dulu")
+        }
+        syncOverlays()
+    }
+
+    private fun resizeSelected(f: Float) {
+        when (timeline.selKind) {
+            TimelineView.TEXT -> proj.texts.getOrNull(timeline.selIdx)?.let { it.size = (it.size * f).coerceIn(0.02f, 0.3f) }
+            TimelineView.OVERLAY -> proj.overlays.getOrNull(timeline.selIdx)?.let { it.size = (it.size * f).coerceIn(0.05f, 1f) }
+            else -> toast("Pilih teks/overlay dulu")
+        }
+        syncOverlays()
+    }
+
+    // ---------- Teks & overlay di layar ----------
+    private fun selBg() = GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(dp(1.5f), Color.WHITE) }
+
+    private fun syncOverlays() {
+        val w = box.width; val h = box.height
+        if (w == 0 || h == 0) return
+
+        val tids = proj.texts.map { it.id }.toSet()
+        textViews.keys.filter { it !in tids }.forEach { k -> textViews.remove(k)?.let { layer.removeView(it) } }
+        proj.texts.forEachIndexed { i, t ->
+            val tv = textViews.getOrPut(t.id) { makeTextView(t.id).also { layer.addView(it) } }
+            tv.text = t.text
+            tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, t.size * w)
+            tv.maxWidth = (w * 0.9f).toInt()
+            val vis = curMs >= t.startMs && curMs < t.endMs
+            tv.visibility = if (vis) View.VISIBLE else View.GONE
+            if (vis) {
+                tv.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.AT_MOST), View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.AT_MOST))
+                tv.x = t.nx * w - tv.measuredWidth / 2f
+                tv.y = t.ny * h - tv.measuredHeight / 2f
+                tv.background = if (timeline.selKind == TimelineView.TEXT && timeline.selIdx == i) selBg() else null
+            }
+        }
+
+        val oids = proj.overlays.map { it.id }.toSet()
+        ovViews.keys.filter { it !in oids }.forEach { k -> ovViews.remove(k)?.let { layer.removeView(it) } }
+        proj.overlays.forEachIndexed { i, o ->
+            val iv = ovViews.getOrPut(o.id) {
+                ImageView(this).apply {
+                    adjustViewBounds = true; scaleType = ImageView.ScaleType.FIT_CENTER
+                    setImageBitmap(decodeScaled(this@MainActivity, o.uri, 720))
+                    makeDraggable(this, TimelineView.OVERLAY, o.id)
+                }.also { layer.addView(it, FrameLayout.LayoutParams(10, ViewGroup.LayoutParams.WRAP_CONTENT)) }
+            }
+            val vis = curMs >= o.startMs && curMs < o.endMs
+            iv.visibility = if (vis) View.VISIBLE else View.GONE
+            if (vis) {
+                val lp = iv.layoutParams as FrameLayout.LayoutParams
+                val tw = max(10, (o.size * w).toInt())
+                if (lp.width != tw) { lp.width = tw; iv.layoutParams = lp }
+                val d = iv.drawable
+                val th = if (d != null && d.intrinsicWidth > 0) tw * d.intrinsicHeight / d.intrinsicWidth else tw
+                iv.x = o.nx * w - tw / 2f
+                iv.y = o.ny * h - th / 2f
+                iv.background = if (timeline.selKind == TimelineView.OVERLAY && timeline.selIdx == i) selBg() else null
+            }
+        }
+    }
+
+    private fun makeTextView(id: Long): TextView {
+        val tv = TextView(this)
+        tv.setTextColor(Color.WHITE); tv.typeface = android.graphics.Typeface.DEFAULT_BOLD
+        tv.gravity = Gravity.CENTER
+        tv.setShadowLayer(8f, 0f, 2f, 0xCC000000.toInt())
+        tv.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        makeDraggable(tv, TimelineView.TEXT, id)
+        return tv
+    }
+
+    private fun indexOf(kind: Int, id: Long) =
+        if (kind == TimelineView.TEXT) proj.texts.indexOfFirst { it.id == id } else proj.overlays.indexOfFirst { it.id == id }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun makeDraggable(v: View, kind: Int, id: Long) {
+        var ox = 0f; var oy = 0f
+        v.setOnTouchListener { view, e ->
+            val w = box.width.toFloat(); val h = box.height.toFloat()
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    pushUndo()
+                    val idx = indexOf(kind, id)
+                    if (idx >= 0) timeline.select(kind, idx, false)
+                    ox = view.x - e.rawX; oy = view.y - e.rawY
+                    guide.on = true; guide.snapX = false; guide.snapY = false; guide.invalidate()
+                    syncOverlays()
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    var cx = e.rawX + ox + view.width / 2f
+                    var cy = e.rawY + oy + view.height / 2f
+                    val th = dp(10f)
+                    guide.snapX = abs(cx - w / 2) < th
+                    guide.snapY = abs(cy - h / 2) < th
+                    if (guide.snapX) cx = w / 2
+                    if (guide.snapY) cy = h / 2
+                    cx = cx.coerceIn(0f, w); cy = cy.coerceIn(0f, h)
+                    view.x = cx - view.width / 2f; view.y = cy - view.height / 2f
+                    val idx = indexOf(kind, id)
+                    if (idx >= 0) {
+                        if (kind == TimelineView.TEXT) { proj.texts[idx].nx = cx / w; proj.texts[idx].ny = cy / h }
+                        else { proj.overlays[idx].nx = cx / w; proj.overlays[idx].ny = cy / h }
+                    }
+                    guide.invalidate()
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { guide.on = false; guide.invalidate() }
+            }
+            true
+        }
+    }
+
+    // ---------- Zoom & geser video ----------
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupLayerGestures() {
+        val sgd = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(d: ScaleGestureDetector): Boolean {
+                clipAt(curMs)?.let { it.scale = (it.scale * d.scaleFactor).coerceIn(1f, 4f); clampPan(it) }
+                applyClipTransform(); return true
+            }
+        })
+        var lx = 0f; var ly = 0f; var moved = false
+        layer.setOnTouchListener { _, e ->
+            sgd.onTouchEvent(e)
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { lx = e.x; ly = e.y; moved = false }
+                MotionEvent.ACTION_MOVE -> if (!sgd.isInProgress && e.pointerCount == 1) {
+                    val c = clipAt(curMs)
+                    if (c != null && c.scale > 1f) {
+                        c.tx += (e.x - lx) / box.width; c.ty += (e.y - ly) / box.height
+                        clampPan(c); applyClipTransform()
+                    }
+                    if (abs(e.x - lx) + abs(e.y - ly) > 8) moved = true
+                    lx = e.x; ly = e.y
+                } else moved = true
+                MotionEvent.ACTION_UP -> if (!moved) { timeline.clearSelection(); syncOverlays() }
+            }
+            true
+        }
+    }
+
+    private fun clampPan(c: Clip) {
+        val m = (c.scale - 1f) / 2f
+        c.tx = c.tx.coerceIn(-m, m); c.ty = c.ty.coerceIn(-m, m)
+    }
+
+    // ---------- Simpan ----------
+    private fun startExport() {
+        if (proj.clips.isEmpty()) { toast("Belum ada video. Tekan + di timeline"); return }
+        if (Build.VERSION.SDK_INT < 29 &&
+            checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            permWrite.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE); return
+        }
+        player.pause()
+        val (w, h) = outSize()
+        val tmp = File(cacheDir, "out_${System.currentTimeMillis()}.mp4")
+
+        val pb = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal)
+        pb.max = 100
+        val wrap = FrameLayout(this).apply { setPadding(dp(24f), dp(16f), dp(24f), dp(8f)); addView(pb) }
+        val ex = Exporter(this)
+        exporter = ex
+        val dlg = AlertDialog.Builder(this).setTitle("Menggabung & menyimpan video…").setView(wrap)
+            .setCancelable(false).setNegativeButton("Batal") { _, _ -> ex.transformer?.cancel() }.create()
+        dlg.show()
+
+        var finished = false
+        try {
+            val t = ex.start(proj, w, h, buildEffects(effectIdx), tmp) { ok, err ->
+                finished = true
+                dlg.dismiss()
+                if (!ok) { toast("Gagal: ${err ?: "tidak diketahui"}"); return@start }
+                io.execute {
+                    val saved = Exporter.saveVideo(this, tmp)
+                    val cv = coverUri
+                    if (cv != null) Exporter.saveCover(this, cv, w, h)
+                    tmp.delete()
+                    runOnUiThread { toast(if (saved) "Tersimpan di galeri (Movies/ADJM-MP4)" else "Gagal menyimpan ke galeri") }
+                }
+            }
+            val holderP = androidx.media3.transformer.ProgressHolder()
+            val poll = object : Runnable {
+                override fun run() {
+                    if (finished) return
+                    if (t.getProgress(holderP) != Transformer.PROGRESS_STATE_NOT_STARTED) pb.progress = holderP.progress
+                    handler.postDelayed(this, 300)
+                }
+            }
+            handler.post(poll)
+        } catch (e: Exception) {
+            dlg.dismiss(); toast("Gagal memulai: ${e.message}")
+        }
+    }
+}

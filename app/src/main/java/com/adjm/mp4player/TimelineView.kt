@@ -96,6 +96,12 @@ class ThumbView(
         val vis = c.clipBounds
         val first = max(0, (vis.left / tileW).toInt() - 1)
         val last = min(((w - 1) / tileW).toInt(), (vis.right / tileW).toInt() + 1)
+        // muat juga kotak di sekitar layar lebih dulu; yang paling dekat tengah dikerjakan pertama
+        val cx = (vis.left + vis.right) / 2f / tileW
+        val pre = ((first - 4)..(last + 4)).filter { it >= 0 && it * tileW < w }
+        for (i in pre.sortedByDescending { abs(it - cx) }) {
+            loader.get(clip.uri, min(clip.inMs + i * 1000L, clip.outMs - 1)) { invalidate() }
+        }
         for (i in first..last) {
             val dst = RectF(i * tileW, 0f, min((i + 1) * tileW, w.toFloat()), h.toFloat())
             if (dst.width() <= 0f) continue
@@ -195,11 +201,43 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
     private val sectionTop = IntArray(5)
     private val blocks = HashMap<Int, View>()
 
+    private var touching = false
+    private val snapRunnable = Runnable { snapEdges() }
+
     private val hsv = object : HorizontalScrollView(ctx) {
         override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
             super.onScrollChanged(l, t, oldl, oldt)
-            if (!programmatic) listener?.onSeek(msAt(l))
+            if (!programmatic) {
+                val ms = if (l >= maxScroll()) proj.totalMs() else msAt(l)
+                listener?.onSeek(ms)
+                removeCallbacks(snapRunnable)
+                postDelayed(snapRunnable, 180)
+            }
         }
+
+        override fun onTouchEvent(ev: MotionEvent): Boolean {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> touching = true
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    touching = false
+                    removeCallbacks(snapRunnable)
+                    postDelayed(snapRunnable, 180)
+                }
+            }
+            return super.onTouchEvent(ev)
+        }
+    }
+
+    private fun maxScroll(): Int = max(0, content.width - hsv.width)
+
+    /** Dekat awal atau akhir video, garis putih otomatis menempel tepat di tepi. */
+    private fun snapEdges() {
+        if (touching) return
+        val x = hsv.scrollX
+        val mx = maxScroll()
+        val th = context.dp(28f)
+        if (mx > 0 && x != mx && mx - x < th) hsv.smoothScrollTo(mx, 0)
+        else if (x != 0 && x < th) hsv.smoothScrollTo(0, 0)
     }
 
     init {

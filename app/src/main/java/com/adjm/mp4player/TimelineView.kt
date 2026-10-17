@@ -17,6 +17,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
+import android.widget.ScrollView
 import android.widget.TextView
 import java.util.concurrent.Executors
 import kotlin.math.abs
@@ -181,6 +182,10 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
     private var programmatic = false
     private var half = 0
     private val content = FrameLayout(ctx)
+    private val vsv = ScrollView(ctx)
+    private var coverView: View? = null
+    private val laneOf = HashMap<Int, Int>()
+    private val sectionTop = IntArray(5)
     private val blocks = HashMap<Int, View>()
 
     private val hsv = object : HorizontalScrollView(ctx) {
@@ -192,7 +197,10 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
 
     init {
         hsv.isHorizontalScrollBarEnabled = false
-        addView(hsv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        vsv.isVerticalScrollBarEnabled = false
+        vsv.isFillViewport = true
+        addView(vsv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        vsv.addView(hsv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         hsv.addView(content, LayoutParams(10, LayoutParams.MATCH_PARENT))
         val head = View(ctx).apply { setBackgroundColor(Color.WHITE) }
         addView(head, LayoutParams(context.dp(2f), LayoutParams.MATCH_PARENT, Gravity.CENTER_HORIZONTAL))
@@ -221,13 +229,40 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
         if (notify) listener?.onSelect(kind, idx)
     }
 
-    private fun top(kind: Int) = context.dp(when (kind) { VIDEO -> 6f; TEXT -> 64f; AUDIO -> 102f; else -> 140f }.toFloat())
+    private fun top(kind: Int) = context.dp(6f)
+    private fun laneH() = context.dp(32f)
+    private fun laneGap() = context.dp(4f)
+    private fun topOf(kind: Int, idx: Int): Int =
+        if (kind == VIDEO) top(VIDEO)
+        else sectionTop[kind] + (laneOf[kind * 1000 + idx] ?: 0) * (laneH() + laneGap())
+
+    private class Lanes(val lane: IntArray, val count: Int)
+
+    /** Blok yang waktunya bertumpuk dipindah ke baris di bawahnya. */
+    private fun lanesOf(spans: List<Pair<Long, Long>>): Lanes {
+        val order = spans.indices.sortedBy { spans[it].first }
+        val laneEnd = ArrayList<Long>()
+        val res = IntArray(spans.size)
+        for (i in order) {
+            val (st, en) = spans[i]
+            var l = laneEnd.indexOfFirst { it <= st }
+            if (l < 0) { laneEnd.add(en); l = laneEnd.size - 1 } else laneEnd[l] = en
+            res[i] = l
+        }
+        return Lanes(res, laneEnd.size)
+    }
+
+    fun setCover(v: View) {
+        (v.parent as? ViewGroup)?.removeView(v)
+        coverView = v
+        refresh()
+    }
     private fun hgt(kind: Int) = context.dp(if (kind == VIDEO) 52f else 32f)
 
-    private fun place(v: View, s: Long, e: Long, kind: Int) {
+    private fun place(v: View, s: Long, e: Long, kind: Int, idx: Int = 0) {
         val minW = if (kind == VIDEO) context.dp(12f) else context.dp(40f)
         val lp = LayoutParams(max(minW, ((e - s) * pps / 1000f).toInt()), hgt(kind))
-        lp.leftMargin = xOf(s); lp.topMargin = top(kind)
+        lp.leftMargin = xOf(s); lp.topMargin = topOf(kind, idx)
         v.layoutParams = lp
     }
 
@@ -254,8 +289,32 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
         if (width == 0) return
         half = width / 2
         val total = proj.totalMs()
-        content.layoutParams = LayoutParams((half * 2 + total * pps / 1000f + context.dp(72f)).toInt(), LayoutParams.MATCH_PARENT)
+        // susun baris: teks, audio, overlay ditumpuk ke bawah bila waktunya bertabrakan
+        laneOf.clear()
+        var y = context.dp(64f)
+        val groups = listOf(
+            TEXT to proj.texts.map { Pair(it.startMs, it.endMs) },
+            AUDIO to proj.audios.map { Pair(it.startMs, it.endMs) },
+            OVERLAY to proj.overlays.map { Pair(it.startMs, it.endMs) }
+        )
+        for ((kind, spans) in groups) {
+            sectionTop[kind] = y
+            if (spans.isEmpty()) continue
+            val ln = lanesOf(spans)
+            ln.lane.forEachIndexed { i, l -> laneOf[kind * 1000 + i] = l }
+            y += ln.count * (laneH() + laneGap())
+        }
+        val contentH = y + context.dp(16f)
+        content.layoutParams = LayoutParams((half * 2 + total * pps / 1000f + context.dp(72f)).toInt(), contentH)
         content.removeAllViews(); blocks.clear()
+
+        coverView?.let { cv ->
+            (cv.parent as? ViewGroup)?.removeView(cv)
+            val clp = LayoutParams(context.dp(64f), context.dp(52f))
+            clp.leftMargin = max(0, half - context.dp(64f) - context.dp(8f))
+            clp.topMargin = top(VIDEO)
+            content.addView(cv, clp)
+        }
 
         var x = 0L
         proj.clips.forEachIndexed { i, c ->
@@ -276,15 +335,15 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
         content.addView(plus, plp)
 
         proj.texts.forEachIndexed { i, t ->
-            val v = label(t.text, TEXT, i); place(v, t.startMs, t.endMs, TEXT); attach(v, TEXT, i)
+            val v = label(t.text, TEXT, i); place(v, t.startMs, t.endMs, TEXT, i); attach(v, TEXT, i)
             content.addView(v); blocks[TEXT * 1000 + i] = v
         }
         proj.audios.forEachIndexed { i, a ->
-            val v = label("♪ " + a.name, AUDIO, i); place(v, a.startMs, a.endMs, AUDIO); attach(v, AUDIO, i)
+            val v = label("♪ " + a.name, AUDIO, i); place(v, a.startMs, a.endMs, AUDIO, i); attach(v, AUDIO, i)
             content.addView(v); blocks[AUDIO * 1000 + i] = v
         }
         proj.overlays.forEachIndexed { i, o ->
-            val v = label("▣ Overlay", OVERLAY, i); place(v, o.startMs, o.endMs, OVERLAY); attach(v, OVERLAY, i)
+            val v = label("▣ Overlay", OVERLAY, i); place(v, o.startMs, o.endMs, OVERLAY, i); attach(v, OVERLAY, i)
             content.addView(v); blocks[OVERLAY * 1000 + i] = v
         }
         val ok = when (selKind) {
@@ -367,7 +426,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
                     1 -> { val dd = cl(d, max(-o[2], -o[0]), o[3] - o[2] - MIN); a.inMs = o[2] + dd; a.startMs = o[0] + dd }
                     else -> a.outMs = cl(o[3] + d, a.inMs + MIN, min(a.srcMs, a.inMs + (total - a.startMs)))
                 }
-                place(v, a.startMs, a.endMs, AUDIO)
+                place(v, a.startMs, a.endMs, AUDIO, idx)
             }
             else -> {
                 when (mode) {
@@ -375,7 +434,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
                     1 -> ss(kind, idx, cl(o[0] + d, 0, ge(kind, idx) - MIN))
                     else -> se(kind, idx, cl(o[1] + d, gs(kind, idx) + MIN, max(total, gs(kind, idx) + MIN)))
                 }
-                place(v, gs(kind, idx), ge(kind, idx), kind)
+                place(v, gs(kind, idx), ge(kind, idx), kind, idx)
             }
         }
     }

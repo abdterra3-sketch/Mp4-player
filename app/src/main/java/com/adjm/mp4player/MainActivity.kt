@@ -136,6 +136,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
 
         timeline = TimelineView(this, proj, ThumbLoader(this))
         timeline.listener = this
+        timeline.setCover(findViewById(R.id.coverBox))
         findViewById<FrameLayout>(R.id.timelineHolder).addView(timeline, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
 
         holder.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> resizeBox() }

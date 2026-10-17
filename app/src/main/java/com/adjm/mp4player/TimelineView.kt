@@ -23,68 +23,88 @@ import kotlin.math.max
 import kotlin.math.min
 
 class ThumbLoader(private val ctx: Context) {
-    private val cache = LruCache<String, Bitmap>(80)
-    private val pending = HashSet<String>()
-    private val pool = Executors.newFixedThreadPool(2)
+    private class Job(val key: String, val uri: Uri, val ms: Long, val cb: () -> Unit)
+
+    private val cache = LruCache<String, Bitmap>(400)
+    private val pending = HashSet<String>()                 // hanya dipakai di thread utama
+    private val queue = java.util.concurrent.LinkedBlockingDeque<Job>()
+    private val retrievers = HashMap<String, MediaMetadataRetriever>()   // hanya dipakai di thread pekerja
     private val main = Handler(Looper.getMainLooper())
 
-    fun get(uri: Uri, ms: Long, onLoaded: () -> Unit): Bitmap? {
-        val q = ms / 500 * 500
-        val key = "$uri@$q"
-        cache.get(key)?.let { return it }
-        if (pending.add(key)) {
-            pool.execute {
-                var bmp: Bitmap? = null
-                try {
-                    val r = MediaMetadataRetriever()
-                    r.setDataSource(ctx, uri)
-                    val f = r.getFrameAtTime(q * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
-                    r.release()
-                    if (f != null) {
-                        val h = 120
-                        val w = max(1, f.width * h / f.height)
-                        bmp = Bitmap.createScaledBitmap(f, w, h, true)
+    init {
+        val worker = Thread {
+            while (true) {
+                val job = try { queue.takeLast() } catch (_: InterruptedException) { break }   // terbaru dikerjakan dulu
+                var bmp: Bitmap? = cache.get(job.key)
+                if (bmp == null) {
+                    try {
+                        val r = retrievers.getOrPut(job.uri.toString()) {
+                            MediaMetadataRetriever().apply { setDataSource(ctx, job.uri) }
+                        }
+                        val f = r.getFrameAtTime(job.ms * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
+                        if (f != null) {
+                            val h = 120
+                            val w = max(1, f.width * h / f.height)
+                            bmp = Bitmap.createScaledBitmap(f, w, h, true)
+                        }
+                    } catch (_: Exception) {
                     }
-                } catch (_: Exception) {
                 }
+                val result = bmp
                 main.post {
-                    pending.remove(key)
-                    if (bmp != null) { cache.put(key, bmp); onLoaded() }
+                    pending.remove(job.key)
+                    if (result != null) { cache.put(job.key, result); job.cb() }
                 }
             }
         }
+        worker.isDaemon = true
+        worker.start()
+    }
+
+    fun get(uri: Uri, ms: Long, onLoaded: () -> Unit): Bitmap? {
+        val key = "$uri@$ms"
+        cache.get(key)?.let { return it }
+        if (pending.add(key)) queue.putLast(Job(key, uri, ms, onLoaded))
         return null
     }
 }
 
-class ThumbView(ctx: Context, private val clip: Clip, private val loader: ThumbLoader) : View(ctx) {
+/** Satu kotak thumbnail = 1 detik video, jadi posisinya sama persis dengan garis waktu. */
+class ThumbView(
+    ctx: Context, private val clip: Clip, private val loader: ThumbLoader, private val tileW: Float
+) : View(ctx) {
     var sel = false
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val bg = Paint().apply { color = 0xFF333333.toInt() }
+    private val bg = Paint().apply { color = 0xFF2B2B2B.toInt() }
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
 
     override fun onDraw(c: Canvas) {
         val w = width; val h = height
         if (w == 0 || h == 0) return
-        val n = max(1, ceil(w.toFloat() / h).toInt())
-        val tw = w.toFloat() / n
-        for (i in 0 until n) {
-            val t = clip.inMs + (clip.durMs * (i + 0.5f) / n).toLong()
-            val dst = RectF(i * tw, 0f, (i + 1) * tw, h.toFloat())
-            val b = loader.get(clip.uri, t) { invalidate() }
-            if (b == null) c.drawRect(dst, bg) else {
-                val da = dst.width() / dst.height()
-                val sa = b.width.toFloat() / b.height
-                val src = if (sa > da) {
-                    val nw = (b.height * da).toInt(); val x = (b.width - nw) / 2
-                    Rect(x, 0, x + nw, b.height)
-                } else {
-                    val nh = (b.width / da).toInt(); val y = (b.height - nh) / 2
-                    Rect(0, y, b.width, y + nh)
-                }
-                c.drawBitmap(b, src, dst, p)
+        c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), bg)
+        val vis = c.clipBounds
+        val first = max(0, (vis.left / tileW).toInt() - 1)
+        val last = min(((w - 1) / tileW).toInt(), (vis.right / tileW).toInt() + 1)
+        for (i in first..last) {
+            val dst = RectF(i * tileW, 0f, min((i + 1) * tileW, w.toFloat()), h.toFloat())
+            if (dst.width() <= 0f) continue
+            val t = min(clip.inMs + i * 1000L, clip.outMs - 1)
+            val b = loader.get(clip.uri, t) { invalidate() } ?: continue
+            val full = RectF(i * tileW, 0f, (i + 1) * tileW, h.toFloat())
+            val da = full.width() / full.height()
+            val sa = b.width.toFloat() / b.height
+            val src = if (sa > da) {
+                val nw = (b.height * da).toInt(); val x = (b.width - nw) / 2
+                Rect(x, 0, x + nw, b.height)
+            } else {
+                val nh = (b.width / da).toInt(); val y = (b.height - nh) / 2
+                Rect(0, y, b.width, y + nh)
             }
+            // potong sumber sesuai lebar kotak terakhir yang tidak penuh
+            val frac = dst.width() / full.width()
+            val srcCut = Rect(src.left, src.top, src.left + (src.width() * frac).toInt().coerceAtLeast(1), src.bottom)
+            c.drawBitmap(b, srcCut, dst, p)
         }
         if (sel) {
             val sw = context.dp(3f).toFloat()
@@ -205,7 +225,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
 
         var x = 0L
         proj.clips.forEachIndexed { i, c ->
-            val v = ThumbView(context, c, thumbs)
+            val v = ThumbView(context, c, thumbs, pps)
             place(v, x, x + c.durMs, VIDEO)
             v.setOnClickListener { select(VIDEO, i) }
             attach(v, VIDEO, i)

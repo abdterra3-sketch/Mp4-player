@@ -123,6 +123,9 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         playerView.useController = false
         playerView.player = player
         player.addListener(object : Player.Listener {
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                toast("Gagal memutar: ${error.errorCodeName}")
+            }
             override fun onIsPlayingChanged(isPlaying: Boolean) { btnPlay.text = if (isPlaying) "❚❚" else "▶" }
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) { player.pause(); curMs = proj.totalMs(); timeline.scrollToMs(curMs); updateAll() }
@@ -239,8 +242,17 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         applyPreviewEffects()
     }
 
+    private var fxApplied = false
+
     private fun applyPreviewEffects() {
-        try { player.setVideoEffects(buildEffects(effectIdx)) } catch (_: Exception) {}
+        val list = buildEffects(effectIdx)
+        if (list.isEmpty() && !fxApplied) return
+        try {
+            player.setVideoEffects(list)
+            fxApplied = list.isNotEmpty()
+        } catch (e: Exception) {
+            toast("Efek pratinjau tidak didukung: ${e.message}")
+        }
     }
 
     private fun buildEffects(i: Int): List<Effect> = when (i) {

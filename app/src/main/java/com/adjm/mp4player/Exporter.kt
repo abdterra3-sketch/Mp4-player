@@ -104,7 +104,7 @@ class Exporter(private val ctx: Context) {
             ve.addAll(fx)
             vb.addItem(EditedMediaItem.Builder(mi).setEffects(Effects(emptyList(), ve)).build())
         }
-        val seqs = mutableListOf(vb.build())
+        val seqs = mutableListOf<EditedMediaItemSequence>(vb.build())
 
         // --- Audio tambahan ---
         val ab = EditedMediaItemSequence.Builder()

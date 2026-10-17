@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.adjm.mp4player"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.adjm.mp4player"

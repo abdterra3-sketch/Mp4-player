@@ -438,7 +438,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
                             else -> { orig[0] = gs(kind, idx); orig[1] = ge(kind, idx) }
                         }
                         select(kind, idx)
-                        parent.requestDisallowInterceptTouchEvent(true)
+                        view.parent?.requestDisallowInterceptTouchEvent(true)
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
@@ -456,7 +456,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
                         return true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        parent.requestDisallowInterceptTouchEvent(false)
+                        view.parent?.requestDisallowInterceptTouchEvent(false)
                         val handled = mode != 0
                         mode = 0
                         if (handled && started) listener?.onEdited()

@@ -312,7 +312,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
             y += ln.count * (laneH() + laneGap())
         }
         val contentH = y + context.dp(16f)
-        content.layoutParams = LayoutParams((half * 2 + total * pps / 1000f + context.dp(72f)).toInt(), contentH)
+        content.layoutParams = LayoutParams((width + total * pps / 1000f).toInt(), contentH)
         content.removeAllViews(); blocks.clear()
 
         coverView?.let { cv ->

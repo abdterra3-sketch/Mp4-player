@@ -136,7 +136,8 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
 
         timeline = TimelineView(this, proj, ThumbLoader(this))
         timeline.listener = this
-        timeline.setCover(findViewById(R.id.coverBox))
+        val coverBox = findViewById<View>(R.id.coverBox)
+        timeline.setCover(coverBox)
         findViewById<FrameLayout>(R.id.timelineHolder).addView(timeline, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
 
         holder.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> resizeBox() }
@@ -151,7 +152,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             editArea.visibility = if (fullscreen) View.GONE else View.VISIBLE
             findViewById<View>(R.id.header).visibility = if (fullscreen) View.GONE else View.VISIBLE
         }
-        findViewById<View>(R.id.coverBox).setOnClickListener { pickCover.launch("image/*") }
+        coverBox.setOnClickListener { pickCover.launch("image/*") }
         findViewById<View>(R.id.bEdit).setOnClickListener { showMode(1) }
         findViewById<View>(R.id.bAudio).setOnClickListener { showMode(2) }
         findViewById<View>(R.id.bText).setOnClickListener { showMode(3) }

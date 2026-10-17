@@ -8,6 +8,8 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.text.TextPaint
+import android.text.TextUtils
 import android.util.LruCache
 import android.view.Gravity
 import android.view.MotionEvent
@@ -120,12 +122,50 @@ class ThumbView(
     }
 }
 
+/** Blok teks / audio / overlay dengan pegangan tarik di kiri dan kanan. */
+class BlockView(ctx: Context, private val text: String, private val bg: Int) : View(ctx) {
+    var sel = false
+    private val fillP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = bg }
+    private val strokeP = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.WHITE }
+    private val textP = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = ctx.dp(12f).toFloat() }
+    private val gripP = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    private fun bar(c: Canvas, cx: Float, h: Float) {
+        val bw = context.dp(2.5f).toFloat()
+        c.drawRoundRect(cx - bw / 2, h * 0.28f, cx + bw / 2, h * 0.72f, bw, bw, gripP)
+    }
+
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat(); val h = height.toFloat()
+        val r = context.dp(6f).toFloat()
+        val gw = context.dp(16f).toFloat()
+        c.drawRoundRect(0f, 0f, w, h, r, r, fillP)
+        val avail = max(0f, w - 2 * gw - context.dp(4f))
+        val t = TextUtils.ellipsize(text, textP, avail, TextUtils.TruncateAt.END).toString()
+        val fm = textP.fontMetrics
+        c.drawText(t, gw + context.dp(2f), h / 2 - (fm.ascent + fm.descent) / 2, textP)
+        if (sel) {
+            val sw = context.dp(2.5f).toFloat()
+            strokeP.strokeWidth = sw
+            c.drawRoundRect(sw / 2, sw / 2, w - sw / 2, h - sw / 2, r, r, strokeP)
+            gripP.color = Color.WHITE
+            c.drawRoundRect(0f, 0f, gw, h, r, r, gripP)
+            c.drawRoundRect(w - gw, 0f, w, h, r, r, gripP)
+            gripP.color = 0xFF777777.toInt()
+        } else {
+            gripP.color = Color.argb(170, 255, 255, 255)
+        }
+        bar(c, gw / 2, h); bar(c, w - gw / 2, h)
+    }
+}
+
 class TimelineView(ctx: Context, private val proj: Project, private val thumbs: ThumbLoader) : FrameLayout(ctx) {
     interface Listener {
         fun onSeek(ms: Long)
         fun onSelect(kind: Int, idx: Int)
         fun onBeginEdit()
         fun onEdited()
+        fun onPreviewAt(ms: Long)
         fun onAddVideo()
     }
 
@@ -185,7 +225,8 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
     private fun hgt(kind: Int) = context.dp(if (kind == VIDEO) 52f else 32f)
 
     private fun place(v: View, s: Long, e: Long, kind: Int) {
-        val lp = LayoutParams(max(context.dp(12f), ((e - s) * pps / 1000f).toInt()), hgt(kind))
+        val minW = if (kind == VIDEO) context.dp(12f) else context.dp(40f)
+        val lp = LayoutParams(max(minW, ((e - s) * pps / 1000f).toInt()), hgt(kind))
         lp.leftMargin = xOf(s); lp.topMargin = top(kind)
         v.layoutParams = lp
     }
@@ -198,20 +239,13 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
         for ((key, v) in blocks) {
             val kind = key / 1000
             val selected = selKind == kind && selIdx == key % 1000
-            if (v is ThumbView) { v.sel = selected; v.invalidate() } else {
-                v.background = GradientDrawable().apply {
-                    setColor(colorOf(kind)); cornerRadius = context.dp(6f).toFloat()
-                    if (selected) setStroke(context.dp(2.5f), Color.WHITE)
-                }
-            }
+            if (v is ThumbView) { v.sel = selected; v.invalidate() }
+            else if (v is BlockView) { v.sel = selected; v.invalidate() }
         }
     }
 
-    private fun label(text: String, kind: Int, idx: Int): TextView {
-        val t = TextView(context)
-        t.text = text; t.setTextColor(Color.WHITE); t.textSize = 11f
-        t.setSingleLine(true); t.gravity = Gravity.CENTER_VERTICAL
-        t.setPadding(context.dp(10f), 0, context.dp(10f), 0)
+    private fun label(text: String, kind: Int, idx: Int): BlockView {
+        val t = BlockView(context, text, colorOf(kind))
         t.setOnClickListener { select(kind, idx) }
         return t
     }
@@ -296,6 +330,10 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
                         }
                         val d = ((e.rawX - downX) * 1000f / pps).toLong()
                         drag(view, kind, idx, mode, d, orig)
+                        if (kind != VIDEO) {
+                            val t = if (mode == 2) ge(kind, idx) - 1 else gs(kind, idx)
+                            listener?.onPreviewAt(t)
+                        }
                         return true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {

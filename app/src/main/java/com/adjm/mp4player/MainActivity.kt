@@ -68,6 +68,8 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private var curMs = 0L
+    private var viewOverride: Long? = null
+    private val viewMs: Long get() = viewOverride ?: curMs
     private var portrait = true
     private var res720 = true
     private var effectIdx = 0
@@ -192,6 +194,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     // ---------- Putar ----------
     private fun togglePlay() {
         if (proj.clips.isEmpty()) { toast("Tambahkan video dulu dengan tombol +"); return }
+        if (viewOverride != null) { viewOverride = null; seekToTimeline(curMs) }
         if (player.isPlaying) player.pause() else {
             if (curMs >= proj.totalMs() - 50) { curMs = 0; seekToTimeline(0); timeline.scrollToMs(0) }
             player.play()
@@ -271,7 +274,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     }
 
     private fun applyClipTransform() {
-        val c = clipAt(curMs)
+        val c = clipAt(viewMs)
         val s = c?.scale ?: 1f
         playerView.scaleX = s; playerView.scaleY = s
         playerView.translationX = (c?.tx ?: 0f) * box.width
@@ -282,6 +285,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     private fun updateAll() { updateTime(); syncOverlays(); applyClipTransform() }
 
     private fun afterChange() {
+        viewOverride = null
         curMs = curMs.coerceIn(0, proj.totalMs())
         rebuildPlayer(); timeline.refresh(); timeline.scrollToMs(curMs); updateAll()
     }
@@ -308,6 +312,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
 
     // ---------- Timeline listener ----------
     override fun onSeek(ms: Long) {
+        viewOverride = null
         if (player.isPlaying) player.pause()
         curMs = ms.coerceIn(0, proj.totalMs())
         seekToTimeline(curMs)
@@ -320,10 +325,20 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             TimelineView.OVERLAY -> proj.overlays.getOrNull(idx)?.let { Pair(it.startMs, it.endMs) }
             else -> null
         }
-        if (range != null && (curMs < range.first || curMs >= range.second)) {
-            curMs = range.first; timeline.scrollToMs(curMs); seekToTimeline(curMs)
+        if (range != null) {
+            if (curMs < range.first || curMs >= range.second) onPreviewAt(range.first)
+            else if (viewOverride != null) { viewOverride = null; seekToTimeline(curMs) }
         }
         updateAll()
+    }
+
+    /** Layar utama menampilkan waktu tertentu tanpa menggeser timeline. */
+    override fun onPreviewAt(ms: Long) {
+        if (player.isPlaying) player.pause()
+        val t = ms.coerceIn(0L, max(0L, proj.totalMs() - 1))
+        viewOverride = t
+        seekToTimeline(t)
+        syncOverlays(); applyClipTransform()
     }
 
     override fun onBeginEdit() = pushUndo()
@@ -505,7 +520,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             1 -> {
                 pbtn("✂ Potong") { splitAtPlayhead() }
                 pbtn("🗑 Hapus") { deleteSelected() }
-                pbtn("⟲ Reset zoom") { clipAt(curMs)?.let { it.scale = 1f; it.tx = 0f; it.ty = 0f }; applyClipTransform() }
+                pbtn("⟲ Reset zoom") { clipAt(viewMs)?.let { it.scale = 1f; it.tx = 0f; it.ty = 0f }; applyClipTransform() }
                 pbtn("+ Video") { pickVideo.launch("video/*") }
             }
             2 -> {
@@ -587,7 +602,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             tv.text = t.text
             tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, t.size * w)
             tv.maxWidth = (w * 0.9f).toInt()
-            val vis = curMs >= t.startMs && curMs < t.endMs
+            val vis = viewMs >= t.startMs && viewMs < t.endMs
             tv.visibility = if (vis) View.VISIBLE else View.GONE
             if (vis) {
                 tv.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.AT_MOST), View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.AT_MOST))
@@ -607,7 +622,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                     makeDraggable(this, TimelineView.OVERLAY, o.id)
                 }.also { layer.addView(it, FrameLayout.LayoutParams(10, ViewGroup.LayoutParams.WRAP_CONTENT)) }
             }
-            val vis = curMs >= o.startMs && curMs < o.endMs
+            val vis = viewMs >= o.startMs && viewMs < o.endMs
             iv.visibility = if (vis) View.VISIBLE else View.GONE
             if (vis) {
                 val lp = iv.layoutParams as FrameLayout.LayoutParams
@@ -677,7 +692,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     private fun setupLayerGestures() {
         val sgd = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(d: ScaleGestureDetector): Boolean {
-                clipAt(curMs)?.let { it.scale = (it.scale * d.scaleFactor).coerceIn(1f, 4f); clampPan(it) }
+                clipAt(viewMs)?.let { it.scale = (it.scale * d.scaleFactor).coerceIn(1f, 4f); clampPan(it) }
                 applyClipTransform(); return true
             }
         })
@@ -687,7 +702,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> { lx = e.x; ly = e.y; moved = false }
                 MotionEvent.ACTION_MOVE -> if (!sgd.isInProgress && e.pointerCount == 1) {
-                    val c = clipAt(curMs)
+                    val c = clipAt(viewMs)
                     if (c != null && c.scale > 1f) {
                         c.tx += (e.x - lx) / box.width; c.ty += (e.y - ly) / box.height
                         clampPan(c); applyClipTransform()

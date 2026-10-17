@@ -312,7 +312,8 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
             y += ln.count * (laneH() + laneGap())
         }
         val contentH = y + context.dp(16f)
-        content.layoutParams = LayoutParams((width + total * pps / 1000f).toInt(), contentH)
+        val cw = (width + total * pps / 1000f).toInt()
+        content.layoutParams = LayoutParams(cw, contentH)
         content.removeAllViews(); blocks.clear()
 
         coverView?.let { cv ->
@@ -338,7 +339,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
             setOnClickListener { listener?.onAddVideo() }
         }
         val plp = LayoutParams(context.dp(40f), context.dp(40f))
-        plp.leftMargin = xOf(total) + context.dp(10f); plp.topMargin = top(VIDEO) + context.dp(6f)
+        plp.leftMargin = cw - context.dp(40f) - context.dp(8f); plp.topMargin = top(VIDEO) + context.dp(6f)
         content.addView(plus, plp)
 
         proj.texts.forEachIndexed { i, t ->

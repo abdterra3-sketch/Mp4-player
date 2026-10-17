@@ -38,7 +38,7 @@ class ThumbLoader(private val ctx: Context) {
                 try {
                     val r = MediaMetadataRetriever()
                     r.setDataSource(ctx, uri)
-                    val f = r.getFrameAtTime(q * 1000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    val f = r.getFrameAtTime(q * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
                     r.release()
                     if (f != null) {
                         val h = 120

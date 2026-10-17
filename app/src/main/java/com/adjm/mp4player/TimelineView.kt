@@ -208,7 +208,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
         override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
             super.onScrollChanged(l, t, oldl, oldt)
             if (!programmatic) {
-                val ms = if (l >= maxScroll()) proj.totalMs() else msAt(l)
+                val ms = if (l >= maxScroll()) timelineEnd() else msAt(l)
                 listener?.onSeek(ms)
                 removeCallbacks(snapRunnable)
                 postDelayed(snapRunnable, 180)
@@ -229,6 +229,20 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
     }
 
     private fun maxScroll(): Int = max(0, content.width - hsv.width)
+
+    /** Akhir timeline = akhir video, atau blok teks/audio/overlay yang melewatinya. */
+    private fun timelineEnd(): Long = maxOf(
+        proj.totalMs(),
+        proj.texts.maxOfOrNull { it.endMs } ?: 0L,
+        proj.overlays.maxOfOrNull { it.endMs } ?: 0L,
+        proj.audios.maxOfOrNull { it.endMs } ?: 0L
+    )
+
+    private fun ensureWidth(endMs: Long) {
+        val need = (width + max(proj.totalMs(), endMs) * pps / 1000f).toInt() + context.dp(80f)
+        val lp = content.layoutParams
+        if (lp != null && lp.width < need) { lp.width = need; content.layoutParams = lp }
+    }
 
     /** Dekat awal atau akhir video, garis putih otomatis menempel tepat di tepi. */
     private fun snapEdges() {
@@ -350,7 +364,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
             y += ln.count * (laneH() + laneGap())
         }
         val contentH = y + context.dp(16f)
-        val cw = (width + total * pps / 1000f).toInt()
+        val cw = (width + timelineEnd() * pps / 1000f).toInt()
         content.layoutParams = LayoutParams(cw, contentH)
         content.removeAllViews(); blocks.clear()
 
@@ -455,7 +469,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
     }
 
     private fun drag(v: View, kind: Int, idx: Int, mode: Int, d: Long, o: LongArray) {
-        val total = proj.totalMs()
+        val total = proj.totalMs() + 300_000L   // blok boleh melewati akhir video (maks. 5 menit)
         when (kind) {
             VIDEO -> {
                 val c = proj.clips[idx]
@@ -473,6 +487,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
                     else -> a.outMs = cl(o[3] + d, a.inMs + MIN, min(a.srcMs, a.inMs + (total - a.startMs)))
                 }
                 place(v, a.startMs, a.endMs, AUDIO, idx)
+                ensureWidth(a.endMs)
             }
             else -> {
                 when (mode) {
@@ -481,6 +496,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
                     else -> se(kind, idx, cl(o[1] + d, gs(kind, idx) + MIN, max(total, gs(kind, idx) + MIN)))
                 }
                 place(v, gs(kind, idx), ge(kind, idx), kind, idx)
+                ensureWidth(ge(kind, idx))
             }
         }
     }

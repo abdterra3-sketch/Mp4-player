@@ -379,25 +379,20 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         afterChange()
     }
 
-    private fun spanEnd(): Long {
-        val total = proj.totalMs()
-        return if (total - curMs >= MIN) min(curMs + 3000, total) else total
-    }
+    private fun spanEnd(): Long = curMs + 3000
 
     private fun addAudio(uri: Uri) {
-        val total = proj.totalMs()
-        if (total - curMs < MIN) { toast("Geser garis putih ke posisi sebelum akhir video"); return }
+        if (proj.totalMs() <= 0) { toast("Tambahkan video dulu"); return }
         val d = durationOf(uri)
         if (d <= 0) { toast("Audio tidak bisa dibaca"); return }
         pushUndo()
         val a = AudioItem(uri = uri, name = nameOf(uri), srcMs = d, startMs = curMs)
-        a.outMs = min(d, total - curMs)
         proj.audios.add(a)
         timeline.refresh(); timeline.select(TimelineView.AUDIO, proj.audios.size - 1, false)
     }
 
     private fun addOverlay(uri: Uri) {
-        if (proj.totalMs() - curMs < MIN) { toast("Geser garis putih ke posisi sebelum akhir video"); return }
+        if (proj.totalMs() <= 0) { toast("Tambahkan video dulu"); return }
         pushUndo()
         proj.overlays.add(OverlayItem(uri = uri, startMs = curMs, endMs = spanEnd()))
         timeline.refresh(); timeline.select(TimelineView.OVERLAY, proj.overlays.size - 1, false)
@@ -405,7 +400,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     }
 
     private fun addText() {
-        if (proj.totalMs() - curMs < MIN) { toast("Tambahkan video dulu / geser garis putih ke dalam video"); return }
+        if (proj.totalMs() <= 0) { toast("Tambahkan video dulu"); return }
         val et = EditText(this)
         et.setText("MASUKKAN TEKS"); et.selectAll()
         et.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE

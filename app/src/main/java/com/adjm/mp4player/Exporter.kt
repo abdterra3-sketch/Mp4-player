@@ -3,6 +3,7 @@ package com.adjm.mp4player
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.*
+import android.media.MediaMetadataRetriever
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
@@ -85,7 +86,25 @@ class Exporter(private val ctx: Context) {
     var transformer: Transformer? = null
 
     fun start(proj: Project, outW: Int, outH: Int, fx: List<Effect>, out: File, done: (Boolean, String?) -> Unit): Transformer {
-        val total = proj.totalMs()
+        val vidTotal = proj.totalMs()
+        // panjang akhir: video, atau teks/overlay/audio yang melewati akhir video
+        val endMs = maxOf(
+            vidTotal,
+            proj.texts.maxOfOrNull { it.endMs } ?: 0L,
+            proj.overlays.maxOfOrNull { it.endMs } ?: 0L,
+            proj.audios.maxOfOrNull { it.endMs } ?: 0L
+        )
+
+        fun effectsFor(c: Clip): List<Effect> {
+            val ve = mutableListOf<Effect>()
+            if (c.scale != 1f || c.tx != 0f || c.ty != 0f) {
+                val s = c.scale; val tx = c.tx * 2f; val ty = -c.ty * 2f
+                ve.add(MatrixTransformation { _ -> Matrix().apply { postScale(s, s); postTranslate(tx, ty) } })
+            }
+            ve.add(Presentation.createForWidthAndHeight(outW, outH, Presentation.LAYOUT_SCALE_TO_FIT))
+            ve.addAll(fx)
+            return ve
+        }
 
         // --- Video ---
         val vb = EditedMediaItemSequence.Builder()
@@ -95,14 +114,37 @@ class Exporter(private val ctx: Context) {
                     MediaItem.ClippingConfiguration.Builder()
                         .setStartPositionMs(c.inMs).setEndPositionMs(c.outMs).build()
                 ).build()
-            val ve = mutableListOf<Effect>()
-            if (c.scale != 1f || c.tx != 0f || c.ty != 0f) {
-                val s = c.scale; val tx = c.tx * 2f; val ty = -c.ty * 2f
-                ve.add(MatrixTransformation { _ -> Matrix().apply { postScale(s, s); postTranslate(tx, ty) } })
+            vb.addItem(EditedMediaItem.Builder(mi).setEffects(Effects(emptyList(), effectsFor(c))).build())
+        }
+
+        // --- Perpanjangan: frame terakhir ditahan bila narasi/teks lebih panjang dari video ---
+        var total = vidTotal
+        val extra = endMs - vidTotal
+        if (extra > 300 && proj.clips.isNotEmpty()) {
+            try {
+                val c = proj.clips.last()
+                val tUs = max(0L, c.outMs - 80) * 1000
+                var bmp = FrameGrabber.grab(ctx, c.uri, tUs, outH)
+                if (bmp == null) {
+                    val r = MediaMetadataRetriever()
+                    try {
+                        r.setDataSource(ctx, c.uri)
+                        bmp = r.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST)
+                    } finally { try { r.release() } catch (_: Exception) {} }
+                }
+                if (bmp != null) {
+                    val f = File(ctx.cacheDir, "freeze_${System.currentTimeMillis()}.png")
+                    f.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                    val item = EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(f)))
+                        .setDurationUs(extra * 1000)
+                        .setFrameRate(30)
+                        .setEffects(Effects(emptyList(), effectsFor(c)))
+                        .build()
+                    vb.addItem(item)
+                    total = endMs
+                }
+            } catch (_: Exception) {
             }
-            ve.add(Presentation.createForWidthAndHeight(outW, outH, Presentation.LAYOUT_SCALE_TO_FIT))
-            ve.addAll(fx)
-            vb.addItem(EditedMediaItem.Builder(mi).setEffects(Effects(emptyList(), ve)).build())
         }
         val seqs = mutableListOf<EditedMediaItemSequence>(vb.build())
 

@@ -40,19 +40,23 @@ class ThumbLoader(private val ctx: Context) {
                     val job = try { queue.takeLast() } catch (_: InterruptedException) { break }   // terbaru dikerjakan dulu
                     var bmp: Bitmap? = cache.get(job.key)
                     if (bmp == null) {
-                        // retriever baru untuk setiap frame supaya tiap detik menghasilkan gambar yang berbeda
-                        val r = MediaMetadataRetriever()
-                        try {
-                            r.setDataSource(ctx, job.uri)
-                            val f = r.getFrameAtTime(job.ms * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
-                            if (f != null) {
-                                val h = 120
-                                val w = max(1, f.width * h / f.height)
-                                bmp = Bitmap.createScaledBitmap(f, w, h, true)
+                        // cara utama: decoder langsung (frame tepat di waktunya)
+                        bmp = FrameGrabber.grab(ctx, job.uri, job.ms * 1000, 120)
+                        if (bmp == null) {
+                            // cadangan bila decoder gagal
+                            val r = MediaMetadataRetriever()
+                            try {
+                                r.setDataSource(ctx, job.uri)
+                                val f = r.getFrameAtTime(job.ms * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
+                                if (f != null) {
+                                    val h = 120
+                                    val w = max(1, f.width * h / f.height)
+                                    bmp = Bitmap.createScaledBitmap(f, w, h, true)
+                                }
+                            } catch (_: Exception) {
+                            } finally {
+                                try { r.release() } catch (_: Exception) {}
                             }
-                        } catch (_: Exception) {
-                        } finally {
-                            try { r.release() } catch (_: Exception) {}
                         }
                     }
                     val result = bmp

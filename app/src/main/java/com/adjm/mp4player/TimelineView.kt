@@ -208,7 +208,15 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
         override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
             super.onScrollChanged(l, t, oldl, oldt)
             if (!programmatic) {
-                val ms = if (l >= maxScroll()) timelineEnd() else msAt(l)
+                val mx = maxScroll()
+                if (l > mx) {
+                    programmatic = true
+                    scrollTo(mx, 0)
+                    programmatic = false
+                    listener?.onSeek(proj.totalMs())
+                    return
+                }
+                val ms = if (l >= mx) proj.totalMs() else msAt(l)
                 listener?.onSeek(ms)
                 removeCallbacks(snapRunnable)
                 postDelayed(snapRunnable, 180)
@@ -228,7 +236,10 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
         }
     }
 
-    private fun maxScroll(): Int = max(0, content.width - hsv.width)
+    private fun videoEndPx(): Int = (proj.totalMs() * pps / 1000f).toInt()
+
+    /** Garis putih hanya bergerak sepanjang durasi video: dari frame pertama sampai frame terakhir. */
+    private fun maxScroll(): Int = max(0, min(content.width - hsv.width, videoEndPx()))
 
     /** Akhir timeline = akhir video, atau blok teks/audio/overlay yang melewatinya. */
     private fun timelineEnd(): Long = maxOf(
@@ -244,14 +255,15 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
         if (lp != null && lp.width < need) { lp.width = need; content.layoutParams = lp }
     }
 
-    /** Dekat awal atau akhir video, garis putih otomatis menempel tepat di tepi. */
+    /** Dekat awal video atau akhir video, garis putih otomatis menempel tepat di tepi. */
     private fun snapEdges() {
         if (touching) return
         val x = hsv.scrollX
         val mx = maxScroll()
-        val th = context.dp(28f)
-        if (mx > 0 && x != mx && mx - x < th) hsv.smoothScrollTo(mx, 0)
-        else if (x != 0 && x < th) hsv.smoothScrollTo(0, 0)
+        val videoEnd = (proj.totalMs() * pps / 1000f).toInt()
+        val points = listOf(0, videoEnd, mx).filter { it in 0..mx }.distinct()
+        val nearest = points.minByOrNull { abs(it - x) } ?: return
+        if (x != nearest && abs(x - nearest) < context.dp(28f)) hsv.smoothScrollTo(nearest, 0)
     }
 
     init {
@@ -391,7 +403,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
             setOnClickListener { listener?.onAddVideo() }
         }
         val plp = LayoutParams(context.dp(40f), context.dp(40f))
-        plp.leftMargin = cw - context.dp(40f) - context.dp(8f); plp.topMargin = top(VIDEO) + context.dp(6f)
+        plp.leftMargin = xOf(total) + context.dp(56f); plp.topMargin = top(VIDEO) + context.dp(6f)
         content.addView(plus, plp)
 
         proj.texts.forEachIndexed { i, t ->

@@ -78,7 +78,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     private var fullscreen = false
     private val undoStack = ArrayList<Snapshot>()
     private val redoStack = ArrayList<Snapshot>()
-    private val textViews = HashMap<Long, TextView>()
+    private val textViews = HashMap<Long, OutlineTextView>()
     private val ovViews = HashMap<Long, ImageView>()
     private val audioPlayers = HashMap<Long, MediaPlayer>()
     private var exporter: Exporter? = null
@@ -399,30 +399,81 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         updateAll()
     }
 
+    /** Kotak teks dengan baris emoji dan tombol tempel (untuk emoji dari notepad). */
+    private fun showTextDialog(title: String, initial: String, onOk: (String) -> Unit) {
+        val et = EditText(this)
+        et.setText(initial)
+        et.setSelection(initial.length)
+        et.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+
+        fun insert(text: String) {
+            val st = et.selectionStart.coerceAtLeast(0)
+            et.text.insert(st, text)
+        }
+
+        val emojis = listOf("😀", "😂", "😍", "🥰", "😎", "🤔", "😢", "😡", "👍", "🙏", "❤️", "🔥", "✨", "🎉", "💯", "🌿", "🌳", "🦋", "🌧️", "☀️")
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        for (e in emojis) {
+            val tv = TextView(this)
+            tv.text = e; tv.textSize = 24f
+            tv.setPadding(dp(8f), dp(6f), dp(8f), dp(6f))
+            tv.setOnClickListener { insert(e) }
+            row.addView(tv)
+        }
+        val scroll = HorizontalScrollView(this)
+        scroll.isHorizontalScrollBarEnabled = false
+        scroll.addView(row)
+
+        val paste = TextView(this)
+        paste.text = "📋 Tempel dari notepad / clipboard"
+        paste.textSize = 14f
+        paste.setPadding(dp(4f), dp(10f), dp(4f), dp(10f))
+        paste.setOnClickListener {
+            val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            val txt = cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()
+            if (txt.isNullOrEmpty()) toast("Clipboard kosong. Salin teks atau emoji dulu.") else insert(txt)
+        }
+
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(dp(20f), dp(8f), dp(20f), 0)
+        box.addView(et)
+        box.addView(scroll)
+        box.addView(paste)
+
+        AlertDialog.Builder(this).setTitle(title).setView(box)
+            .setPositiveButton("OK") { _, _ ->
+                val s = et.text.toString()
+                if (s.isNotBlank()) onOk(s)
+            }.setNegativeButton("Batal", null).show()
+    }
+
     private fun addText() {
         if (proj.totalMs() <= 0) { toast("Tambahkan video dulu"); return }
-        val et = EditText(this)
-        et.setText("MASUKKAN TEKS"); et.selectAll()
-        et.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-        AlertDialog.Builder(this).setTitle("Teks").setView(et)
-            .setPositiveButton("OK") { _, _ ->
-                val s = et.text.toString().ifBlank { return@setPositiveButton }
-                pushUndo()
-                proj.texts.add(TextItem(text = s, startMs = curMs, endMs = spanEnd()))
-                timeline.refresh(); timeline.select(TimelineView.TEXT, proj.texts.size - 1, false); updateAll()
-            }.setNegativeButton("Batal", null).show()
+        showTextDialog("Teks", "MASUKKAN TEKS") { s ->
+            pushUndo()
+            proj.texts.add(TextItem(text = s, startMs = curMs, endMs = spanEnd()))
+            timeline.refresh(); timeline.select(TimelineView.TEXT, proj.texts.size - 1, false); updateAll()
+        }
     }
 
     private fun editText() {
         val t = proj.texts.getOrNull(if (timeline.selKind == TimelineView.TEXT) timeline.selIdx else -1)
         if (t == null) { toast("Pilih blok teks di timeline atau sentuh teks di layar"); return }
-        val et = EditText(this); et.setText(t.text)
-        et.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-        AlertDialog.Builder(this).setTitle("Edit teks").setView(et)
-            .setPositiveButton("OK") { _, _ ->
-                pushUndo(); t.text = et.text.toString().ifBlank { t.text }
-                timeline.refresh(); updateAll()
-            }.setNegativeButton("Batal", null).show()
+        showTextDialog("Edit teks", t.text) { s ->
+            pushUndo(); t.text = s
+            timeline.refresh(); updateAll()
+        }
+    }
+
+    private fun chooseFont() {
+        val t = proj.texts.getOrNull(if (timeline.selKind == TimelineView.TEXT) timeline.selIdx else -1)
+        if (t == null) { toast("Pilih blok teks dulu"); return }
+        AlertDialog.Builder(this).setTitle("Gaya font")
+            .setSingleChoiceItems(TextFonts.names.toTypedArray(), t.font) { d, which ->
+                pushUndo(); t.font = which; syncOverlays(); d.dismiss()
+            }.show()
     }
 
     // ---------- Edit: potong / hapus ----------
@@ -528,6 +579,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             3 -> {
                 pbtn("+ Teks") { addText() }
                 pbtn("✎ Edit") { editText() }
+                pbtn("Aa Font") { chooseFont() }
                 pbtn("✂ Potong") { splitAtPlayhead() }
                 pbtn("🗑 Hapus") { deleteSelected() }
                 pbtn("A+") { resizeSelected(1.1f) }
@@ -597,6 +649,9 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         proj.texts.forEachIndexed { i, t ->
             val tv = textViews.getOrPut(t.id) { makeTextView(t.id).also { layer.addView(it) } }
             tv.text = t.text
+            tv.typeface = TextFonts.typeface(this, t.font)
+            tv.outline = TextFonts.outline(t.font)
+            tv.paint.textSkewX = TextFonts.skew(t.font)
             tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, t.size * w)
             tv.maxWidth = (w * 0.9f).toInt()
             val vis = viewMs >= t.startMs && viewMs < t.endMs
@@ -634,8 +689,9 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         }
     }
 
-    private fun makeTextView(id: Long): TextView {
-        val tv = TextView(this)
+    private fun makeTextView(id: Long): OutlineTextView {
+        val tv = OutlineTextView(this)
+        tv.setPadding(dp(6f), dp(2f), dp(6f), dp(2f))
         tv.setTextColor(Color.WHITE); tv.typeface = android.graphics.Typeface.DEFAULT_BOLD
         tv.gravity = Gravity.CENTER
         tv.setShadowLayer(8f, 0f, 2f, 0xCC000000.toInt())

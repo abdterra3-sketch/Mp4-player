@@ -66,7 +66,9 @@ class FrameOverlay(
         }
         for (t in at) {
             val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.WHITE; textSize = t.size * w; typeface = Typeface.DEFAULT_BOLD
+                color = Color.WHITE; textSize = t.size * w
+                typeface = TextFonts.typeface(ctx, t.font)
+                textSkewX = TextFonts.skew(t.font)
                 setShadowLayer(t.size * w / 10f, 0f, 2f, 0xCC000000.toInt())
             }
             val maxW = (w * 0.9f).toInt()
@@ -75,6 +77,16 @@ class FrameOverlay(
                 .setAlignment(Layout.Alignment.ALIGN_CENTER).build()
             c.save()
             c.translate(t.nx * w - desired / 2f, t.ny * h - sl.height / 2f)
+            if (TextFonts.outline(t.font)) {
+                tp.style = Paint.Style.STROKE
+                tp.strokeWidth = t.size * w * 0.16f
+                tp.strokeJoin = Paint.Join.ROUND
+                tp.color = Color.BLACK
+                tp.clearShadowLayer()
+                sl.draw(c)
+                tp.style = Paint.Style.FILL
+                tp.color = Color.WHITE
+            }
             sl.draw(c)
             c.restore()
         }

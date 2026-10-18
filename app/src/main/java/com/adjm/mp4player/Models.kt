@@ -9,7 +9,9 @@ data class Clip(
     val id: Long = Ids.next(), val uri: Uri, val srcMs: Long,
     var inMs: Long = 0, var outMs: Long = srcMs,
     var scale: Float = 1f, var tx: Float = 0f, var ty: Float = 0f,
-    var volume: Float = 1f
+    var volume: Float = 1f,
+    var fadeInMs: Long = 0L,    // transisi memudar masuk (gelap -> terang)
+    var fadeOutMs: Long = 0L    // transisi memudar keluar (terang -> gelap)
 ) { val durMs: Long get() = outMs - inMs }
 
 data class TextItem(
@@ -58,4 +60,25 @@ fun Context.dp(v: Float): Int = (v * resources.displayMetrics.density + 0.5f).to
 fun fmt(ms: Long): String {
     val s = ms / 1000
     return "%02d:%02d".format(s / 60, s % 60)
+}
+
+/** Transisi memudar: pengali kecerahan video (0 = gelap, 1 = normal) pada waktu tertentu di timeline. */
+object Fades {
+    fun factor(clips: List<Clip>, tMs: Long): Float {
+        var start = 0L
+        for ((i, c) in clips.withIndex()) {
+            val end = start + c.durMs
+            if (tMs >= start && (tMs < end || (i == clips.size - 1 && tMs >= end))) {
+                var f = 1f
+                if (c.fadeInMs > 0 && tMs - start < c.fadeInMs) f = minOf(f, (tMs - start).toFloat() / c.fadeInMs)
+                if (c.fadeOutMs > 0) {
+                    if (tMs >= end) f = 0f
+                    else if (end - tMs < c.fadeOutMs) f = minOf(f, (end - tMs).toFloat() / c.fadeOutMs)
+                }
+                return f.coerceIn(0f, 1f)
+            }
+            start = end
+        }
+        return 1f
+    }
 }

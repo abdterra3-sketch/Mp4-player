@@ -38,7 +38,7 @@ object Draft {
             for (c in p.clips) clips.put(JSONObject()
                 .put("uri", c.uri.toString()).put("src", c.srcMs).put("in", c.inMs).put("out", c.outMs)
                 .put("scale", c.scale.toDouble()).put("tx", c.tx.toDouble()).put("ty", c.ty.toDouble())
-                .put("vol", c.volume.toDouble()))
+                .put("vol", c.volume.toDouble()).put("fi", c.fadeInMs).put("fo", c.fadeOutMs))
             root.put("clips", clips)
 
             val texts = JSONArray()
@@ -102,7 +102,8 @@ object Draft {
                 p.clips.add(Clip(
                     uri = uri, srcMs = o.getLong("src"), inMs = o.getLong("in"), outMs = o.getLong("out"),
                     scale = o.optDouble("scale", 1.0).toFloat(), tx = o.optDouble("tx", 0.0).toFloat(),
-                    ty = o.optDouble("ty", 0.0).toFloat(), volume = o.optDouble("vol", 1.0).toFloat()
+                    ty = o.optDouble("ty", 0.0).toFloat(), volume = o.optDouble("vol", 1.0).toFloat(),
+                    fadeInMs = o.optLong("fi", 0L), fadeOutMs = o.optLong("fo", 0L)
                 ))
             }
             val texts = root.optJSONArray("texts") ?: JSONArray()

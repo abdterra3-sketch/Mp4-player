@@ -286,6 +286,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         playerView.scaleX = s; playerView.scaleY = s
         playerView.translationX = (c?.tx ?: 0f) * box.width
         playerView.translationY = (c?.ty ?: 0f) * box.height
+        playerView.alpha = Fades.factor(proj.clips, viewMs)
     }
 
     private fun updateTime() { tvTime.text = "${fmt(curMs)}/${fmt(proj.totalMs())}" }
@@ -529,6 +530,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                         pushUndo()
                         val cut = c.inMs + local
                         val n = c.copy(id = Ids.next(), inMs = cut)
+                        n.fadeInMs = 0L; c.fadeOutMs = 0L
                         c.outMs = cut
                         proj.clips.add(i + 1, n)
                         timeline.select(TimelineView.VIDEO, i + 1, false)
@@ -768,6 +770,33 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             }.show()
     }
 
+    // ---------- Transisi memudar ----------
+    private fun chooseTransition() {
+        val c = if (timeline.selKind == TimelineView.VIDEO) proj.clips.getOrNull(timeline.selIdx) else clipAt(viewMs)
+        if (c == null) { toast("Tambahkan video dulu"); return }
+        val names = arrayOf(
+            "Tanpa transisi",
+            "Memudar masuk 1 dtk (gelap → terang)",
+            "Memudar keluar 1 dtk (terang → gelap)",
+            "Masuk + keluar 0,5 dtk (cepat)",
+            "Masuk + keluar 1 dtk",
+            "Masuk + keluar 2 dtk (lambat)"
+        )
+        val ins = longArrayOf(0, 1000, 0, 500, 1000, 2000)
+        val outs = longArrayOf(0, 0, 1000, 500, 1000, 2000)
+        var cur = -1
+        for (i in names.indices) if (c.fadeInMs == ins[i] && c.fadeOutMs == outs[i]) cur = i
+        AlertDialog.Builder(this).setTitle("Transisi klip")
+            .setSingleChoiceItems(names, cur) { d, which ->
+                pushUndo()
+                c.fadeInMs = minOf(ins[which], c.durMs / 2)
+                c.fadeOutMs = minOf(outs[which], c.durMs / 2)
+                d.dismiss()
+                timeline.refresh(); updateAll()
+                if (which != 0) toast("Geser timeline ke awal atau akhir klip untuk melihat pratinjau")
+            }.show()
+    }
+
     // ---------- Volume ----------
     private fun applyVolume() {
         val v = min(1f, clipAt(viewMs)?.volume ?: 1f)
@@ -854,6 +883,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 pbtn("🗑 Hapus") { deleteSelected() }
                 pbtn("⟲ Reset zoom") { clipAt(viewMs)?.let { it.scale = 1f; it.tx = 0f; it.ty = 0f }; applyClipTransform() }
                 pbtn("🔊 Volume") { volumeForVideo() }
+                pbtn("🌓 Transisi") { chooseTransition() }
                 pbtn("+ Video") { pickVideo.launch(arrayOf("video/*")) }
             }
             2 -> {

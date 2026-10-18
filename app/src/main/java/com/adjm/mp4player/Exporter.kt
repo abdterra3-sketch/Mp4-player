@@ -20,6 +20,7 @@ import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.MatrixTransformation
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
+import androidx.media3.effect.RgbMatrix
 import androidx.media3.transformer.*
 import com.google.common.collect.ImmutableList
 import java.io.File
@@ -198,10 +199,20 @@ class Exporter(private val ctx: Context) {
 
         val cb = Composition.Builder(seqs)
         if (hasCover) forceAudio(cb)
+        val compFx = mutableListOf<Effect>()
+        if (proj.clips.any { it.fadeInMs > 0 || it.fadeOutMs > 0 }) {
+            // transisi memudar: kecerahan video diatur menurut waktu di timeline (teks tidak ikut memudar)
+            val snap = proj.clips.map { it.copy() }
+            compFx.add(RgbMatrix { us, _ ->
+                val f = Fades.factor(snap, us / 1000 - off)
+                floatArrayOf(f, 0f, 0f, 0f, 0f, f, 0f, 0f, 0f, 0f, f, 0f, 0f, 0f, 0f, 1f)
+            })
+        }
         if (proj.texts.isNotEmpty() || proj.overlays.isNotEmpty()) {
             val ov = FrameOverlay(ctx, proj.texts.map { it.copy() }, proj.overlays.map { it.copy() }, outW, outH, off)
-            cb.setEffects(Effects(emptyList(), listOf(OverlayEffect(ImmutableList.of<androidx.media3.effect.TextureOverlay>(ov)))))
+            compFx.add(OverlayEffect(ImmutableList.of<androidx.media3.effect.TextureOverlay>(ov)))
         }
+        if (compFx.isNotEmpty()) cb.setEffects(Effects(emptyList(), compFx))
 
         val t = Transformer.Builder(ctx)
             .setVideoMimeType(MimeTypes.VIDEO_H264)

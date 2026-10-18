@@ -122,6 +122,19 @@ class ThumbView(
             val srcCut = Rect(src.left, src.top, src.left + (src.width() * frac).toInt().coerceAtLeast(1), src.bottom)
             c.drawBitmap(b, srcCut, dst, p)
         }
+        if (clip.fadeInMs > 0 || clip.fadeOutMs > 0) {
+            val fadeP = Paint()
+            if (clip.fadeInMs > 0) {
+                val fw = min(w.toFloat(), clip.fadeInMs * tileW / 1000f)
+                fadeP.shader = LinearGradient(0f, 0f, fw, 0f, 0xDD000000.toInt(), 0x00000000, Shader.TileMode.CLAMP)
+                c.drawRect(0f, 0f, fw, h.toFloat(), fadeP)
+            }
+            if (clip.fadeOutMs > 0) {
+                val fw = min(w.toFloat(), clip.fadeOutMs * tileW / 1000f)
+                fadeP.shader = LinearGradient(w - fw, 0f, w.toFloat(), 0f, 0x00000000, 0xDD000000.toInt(), Shader.TileMode.CLAMP)
+                c.drawRect(w - fw, 0f, w.toFloat(), h.toFloat(), fadeP)
+            }
+        }
         if (sel) {
             val sw = context.dp(3f).toFloat()
             line.color = Color.WHITE; line.strokeWidth = sw

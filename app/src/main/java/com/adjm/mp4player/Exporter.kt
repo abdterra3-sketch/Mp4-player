@@ -42,14 +42,15 @@ fun decodeScaled(ctx: Context, uri: Uri, maxW: Int): Bitmap? = try {
 /** Menggambar teks + overlay gambar pada satu bitmap penuh-layar, sesuai waktu. */
 class FrameOverlay(
     private val ctx: Context, private val texts: List<TextItem>,
-    private val ovs: List<OverlayItem>, private val w: Int, private val h: Int
+    private val ovs: List<OverlayItem>, private val w: Int, private val h: Int,
+    private val offsetMs: Long = 0L
 ) : BitmapOverlay() {
     private var lastKey = ""
     private var last: Bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     private val imgs = HashMap<Long, Bitmap?>()
 
     override fun getBitmap(presentationTimeUs: Long): Bitmap {
-        val ms = presentationTimeUs / 1000
+        val ms = presentationTimeUs / 1000 - offsetMs
         val at = texts.filter { ms >= it.startMs && ms < it.endMs }
         val ao = ovs.filter { ms >= it.startMs && ms < it.endMs }
         val key = at.joinToString(",") { it.id.toString() + ":" + TextRender.stateKey(it, ms) } + "|" + ao.joinToString(",") { it.id.toString() }
@@ -84,7 +85,12 @@ class Exporter(private val ctx: Context) {
         return listOf(p)
     }
 
-    fun start(proj: Project, outW: Int, outH: Int, fx: List<Effect>, out: File, done: (Boolean, String?) -> Unit): Transformer {
+    fun start(
+        proj: Project, outW: Int, outH: Int, fx: List<Effect>, out: File,
+        coverUri: Uri?, coverMs: Long, done: (Boolean, String?) -> Unit
+    ): Transformer {
+        val hasCover = coverUri != null && coverMs > 0
+        val off = if (hasCover) coverMs else 0L
         val vidTotal = proj.totalMs()
         // panjang akhir: video, atau teks/overlay/audio yang melewati akhir video
         val endMs = maxOf(
@@ -107,6 +113,17 @@ class Exporter(private val ctx: Context) {
 
         // --- Video ---
         val vb = EditedMediaItemSequence.Builder()
+        if (hasCover && coverUri != null) {
+            // foto sampul ditaruh di depan video selama beberapa detik
+            vb.addItem(
+                EditedMediaItem.Builder(MediaItem.fromUri(coverUri))
+                    .setDurationUs(coverMs * 1000)
+                    .setFrameRate(30)
+                    .setEffects(Effects(emptyList(), listOf(Presentation.createForWidthAndHeight(outW, outH, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))))
+                    .build()
+            )
+            vb.experimentalSetForceAudioTrack(true)
+        }
         for (c in proj.clips) {
             val mi = MediaItem.Builder().setUri(c.uri)
                 .setClippingConfiguration(
@@ -158,7 +175,7 @@ class Exporter(private val ctx: Context) {
             val inMs = a.inMs + shift
             val len = min(a.outMs - inMs, total - s)
             if (len < 200) continue
-            val gap = s - cursor
+            val gap = (s - cursor) + (if (!has) off else 0L)
             if (gap > 0) ab.addGap(gap * 1000)
             val mi = MediaItem.Builder().setUri(a.uri)
                 .setClippingConfiguration(
@@ -173,7 +190,7 @@ class Exporter(private val ctx: Context) {
 
         val cb = Composition.Builder(seqs)
         if (proj.texts.isNotEmpty() || proj.overlays.isNotEmpty()) {
-            val ov = FrameOverlay(ctx, proj.texts.map { it.copy() }, proj.overlays.map { it.copy() }, outW, outH)
+            val ov = FrameOverlay(ctx, proj.texts.map { it.copy() }, proj.overlays.map { it.copy() }, outW, outH, off)
             cb.setEffects(Effects(emptyList(), listOf(OverlayEffect(ImmutableList.of<androidx.media3.effect.TextureOverlay>(ov)))))
         }
 

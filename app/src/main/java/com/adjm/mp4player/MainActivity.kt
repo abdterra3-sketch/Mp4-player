@@ -72,6 +72,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     private var res720 = true
     private var effectIdx = 0
     private var coverUri: Uri? = null
+    private var coverSec = 2
     private var mode = 0
     private var fullscreen = false
     private val undoStack = ArrayList<Snapshot>()
@@ -92,7 +93,10 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     private val pickAudio = registerForActivityResult(ActivityResultContracts.GetContent()) { it?.let { u -> addAudio(u) } }
     private val pickOverlay = registerForActivityResult(ActivityResultContracts.GetContent()) { it?.let { u -> addOverlay(u) } }
     private val pickCover = registerForActivityResult(ActivityResultContracts.GetContent()) { u ->
-        if (u != null) { coverUri = u; coverImg.setImageBitmap(decodeScaled(this, u, 200)) }
+        if (u != null) {
+            coverUri = u; coverImg.setImageBitmap(decodeScaled(this, u, 200))
+            toast("Sampul akan tampil $coverSec detik di awal video hasil Save")
+        }
     }
     private val permWrite = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) startExport() else toast("Izin penyimpanan diperlukan untuk menyimpan ke galeri")
@@ -146,7 +150,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             editArea.visibility = if (fullscreen) View.GONE else View.VISIBLE
             findViewById<View>(R.id.header).visibility = if (fullscreen) View.GONE else View.VISIBLE
         }
-        coverBox.setOnClickListener { pickCover.launch("image/*") }
+        coverBox.setOnClickListener { onCoverClick() }
         findViewById<View>(R.id.bEdit).setOnClickListener { showMode(1) }
         findViewById<View>(R.id.bAudio).setOnClickListener { showMode(2) }
         findViewById<View>(R.id.bText).setOnClickListener { showMode(3) }
@@ -557,6 +561,23 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         afterChange()
     }
 
+    // ---------- Sampul ----------
+    private fun onCoverClick() {
+        if (coverUri == null) { pickCover.launch("image/*"); return }
+        AlertDialog.Builder(this).setTitle("Sampul")
+            .setItems(arrayOf("Ganti foto sampul", "Lama tampil: $coverSec detik (ubah)", "Hapus sampul")) { _, which ->
+                when (which) {
+                    0 -> pickCover.launch("image/*")
+                    1 -> AlertDialog.Builder(this).setTitle("Lama sampul tampil")
+                        .setItems(arrayOf("1 detik", "2 detik", "3 detik", "5 detik")) { _, i ->
+                            coverSec = intArrayOf(1, 2, 3, 5)[i]
+                            toast("Sampul tampil $coverSec detik di awal video")
+                        }.show()
+                    else -> { coverUri = null; coverImg.setImageDrawable(null) }
+                }
+            }.show()
+    }
+
     // ---------- Volume ----------
     private fun applyVolume() {
         val v = min(1f, clipAt(viewMs)?.volume ?: 1f)
@@ -902,7 +923,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
 
         var finished = false
         try {
-            val t = ex.start(proj, w, h, buildEffects(effectIdx), tmp) { ok, err ->
+            val t = ex.start(proj, w, h, buildEffects(effectIdx), tmp, coverUri, coverSec * 1000L) { ok, err ->
                 finished = true
                 dlg.dismiss()
                 if (!ok) { toast("Gagal: ${err ?: "tidak diketahui"}"); return@start }
@@ -922,7 +943,6 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                     }
                     val res = Exporter.saveVideo(this, tmp)
                     val cv = coverUri
-                    val coverOk = if (cv != null) Exporter.saveCover(this, cv, w, h) else false
                     tmp.delete()
                     runOnUiThread {
                         val sb = StringBuilder()
@@ -930,7 +950,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                             sb.append("Video: ${res.where}\nDurasi: ${fmt(durMs)}  •  Ukuran: ${"%.1f".format(sizeKb / 1024f)} MB")
                             sb.append("\nBuka aplikasi Galeri → tab Video / album ADJM-MP4.")
                         } else sb.append("Gagal menyimpan video: ${res.error}")
-                        if (cv != null) sb.append("\n\nSampul disimpan sebagai gambar di album ADJM-Sampul" + if (coverOk) "." else " (gagal).")
+                        if (cv != null) sb.append("\n\nSampul tampil $coverSec detik di awal video.")
                         val b = AlertDialog.Builder(this).setTitle(if (res.uri != null) "Video tersimpan" else "Hasil penyimpanan")
                             .setMessage(sb.toString()).setPositiveButton("OK", null)
                         if (res.uri != null) b.setNeutralButton("Putar") { _, _ ->

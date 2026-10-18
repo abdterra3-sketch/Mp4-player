@@ -46,7 +46,8 @@ object Draft {
                 .put("text", t.text).put("start", t.startMs).put("end", t.endMs)
                 .put("nx", t.nx.toDouble()).put("ny", t.ny.toDouble()).put("size", t.size.toDouble())
                 .put("font", t.font).put("anim", t.anim)
-                .put("color", t.color).put("bg", t.bgColor))
+                .put("color", t.color).put("bg", t.bgColor)
+                .put("ow", t.outlineW.toDouble()).put("oc", t.outlineColor))
             root.put("texts", texts)
 
             val audios = JSONArray()
@@ -111,7 +112,8 @@ object Draft {
                     text = o.getString("text"), startMs = o.getLong("start"), endMs = o.getLong("end"),
                     nx = o.optDouble("nx", 0.5).toFloat(), ny = o.optDouble("ny", 0.5).toFloat(),
                     size = o.optDouble("size", 0.07).toFloat(), font = o.optInt("font", 0), anim = o.optInt("anim", 0),
-                    color = o.optInt("color", -1), bgColor = o.optInt("bg", 0)
+                    color = o.optInt("color", -1), bgColor = o.optInt("bg", 0),
+                    outlineW = o.optDouble("ow", -1.0).toFloat(), outlineColor = o.optInt("oc", -16777216)
                 ))
             }
             val audios = root.optJSONArray("audios") ?: JSONArray()

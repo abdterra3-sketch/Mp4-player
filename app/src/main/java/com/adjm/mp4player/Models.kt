@@ -17,7 +17,9 @@ data class TextItem(
     var nx: Float = 0.5f, var ny: Float = 0.5f, var size: Float = 0.07f,
     var font: Int = 0, var anim: Int = 0,
     var color: Int = -1,      // warna huruf (ARGB), -1 = putih
-    var bgColor: Int = 0      // warna kotak latar (ARGB), 0 = tanpa latar
+    var bgColor: Int = 0,     // warna kotak latar (ARGB), 0 = tanpa latar
+    var outlineW: Float = -1f,      // tebal outline (bagian dari ukuran huruf); -1 = otomatis (font grafiti saja)
+    var outlineColor: Int = -16777216   // warna outline (ARGB), standar hitam
 )
 
 data class OverlayItem(

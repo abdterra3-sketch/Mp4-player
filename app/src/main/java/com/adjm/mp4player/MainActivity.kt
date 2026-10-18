@@ -680,6 +680,69 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         }
     }
 
+    private fun chooseOutline() {
+        val t = selectedText()
+        if (t == null) { toast("Pilih blok teks dulu"); return }
+        pushUndo()
+        showTextNow(t)
+        val cur = TextRender.outlineWidth(t)
+        val label = TextView(this)
+        label.textSize = 16f
+        label.setPadding(0, dp(6f), 0, dp(4f))
+        fun setLabel(level: Int) { label.text = if (level == 0) "Tebal outline: tanpa" else "Tebal outline: $level" }
+        val sb = SeekBar(this)
+        sb.max = 10
+        val lvl = Math.round(cur / 0.03f).coerceIn(0, 10)
+        sb.progress = lvl
+        setLabel(lvl)
+        sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                setLabel(p)
+                t.outlineW = p * 0.03f
+                syncOverlays()
+            }
+            override fun onStartTrackingTouch(s: SeekBar?) {}
+            override fun onStopTrackingTouch(s: SeekBar?) {}
+        })
+
+        val colorLabel = TextView(this)
+        colorLabel.text = "Warna outline:"
+        colorLabel.textSize = 16f
+        colorLabel.setPadding(0, dp(12f), 0, dp(2f))
+        val grid = LinearLayout(this)
+        grid.orientation = LinearLayout.VERTICAL
+        var row: LinearLayout? = null
+        textColors.forEachIndexed { i, col ->
+            if (i % 6 == 0) {
+                row = LinearLayout(this)
+                grid.addView(row)
+            }
+            val cell = View(this)
+            cell.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(col)
+                setStroke(dp(2f), 0xFF888888.toInt())
+            }
+            val lp = LinearLayout.LayoutParams(dp(40f), dp(40f))
+            lp.setMargins(dp(5f), dp(5f), dp(5f), dp(5f))
+            cell.setOnClickListener {
+                t.outlineColor = col
+                if (sb.progress == 0) sb.progress = 3 else syncOverlays()
+            }
+            row!!.addView(cell, lp)
+        }
+
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(dp(22f), dp(8f), dp(22f), 0)
+        box.addView(label)
+        box.addView(sb)
+        box.addView(colorLabel)
+        box.addView(grid)
+        AlertDialog.Builder(this).setTitle("Outline teks").setView(box)
+            .setPositiveButton("OK", null).show()
+    }
+
     private fun chooseBgColor() {
         val t = selectedText()
         if (t == null) { toast("Pilih blok teks dulu"); return }
@@ -806,6 +869,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 pbtn("🎬 Animasi") { chooseAnim() }
                 pbtn("🎨 Warna") { chooseTextColor() }
                 pbtn("▭ Latar") { chooseBgColor() }
+                pbtn("◌ Outline") { chooseOutline() }
                 pbtn("✂ Potong") { splitAtPlayhead() }
                 pbtn("🗑 Hapus") { deleteSelected() }
                 pbtn("A+") { resizeSelected(1.1f) }

@@ -83,12 +83,17 @@ object TextRender {
         else -> "s"
     }
 
+    /** Tebal outline efektif: pilihan pengguna, atau otomatis untuk font grafiti. */
+    fun outlineWidth(t: TextItem): Float =
+        if (t.outlineW >= 0f) t.outlineW else if (TextFonts.outline(t.font)) 0.16f else 0f
+
     private fun passes(t: TextItem, tp: TextPaint, body: () -> Unit) {
-        if (TextFonts.outline(t.font)) {
+        val ow = outlineWidth(t)
+        if (ow > 0f) {
             tp.style = Paint.Style.STROKE
-            tp.strokeWidth = tp.textSize * 0.16f
+            tp.strokeWidth = tp.textSize * ow
             tp.strokeJoin = Paint.Join.ROUND
-            tp.color = Color.BLACK
+            tp.color = t.outlineColor
             tp.clearShadowLayer()
             body()
             tp.style = Paint.Style.FILL

@@ -26,7 +26,7 @@ object TextRender {
 
     fun build(ctx: Context, t: TextItem, frameW: Int): Built {
         val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
+            color = t.color
             textSize = t.size * frameW
             typeface = TextFonts.typeface(ctx, t.font)
             textSkewX = TextFonts.skew(t.font)
@@ -92,7 +92,7 @@ object TextRender {
             tp.clearShadowLayer()
             body()
             tp.style = Paint.Style.FILL
-            tp.color = Color.WHITE
+            tp.color = t.color
         }
         body()
     }
@@ -110,6 +110,14 @@ object TextRender {
         }
         val alpha = if (t.anim in 3..5) (p * 255).toInt().coerceIn(0, 255) else 255
         val layer = if (alpha < 255) c.saveLayerAlpha(-pad, -pad, b.width + pad, sl.height + pad, alpha) else -1
+
+        if (t.bgColor != 0) {
+            val bp = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = t.bgColor }
+            val px = b.tp.textSize * 0.45f
+            val py = b.tp.textSize * 0.25f
+            val r = b.tp.textSize * 0.3f
+            c.drawRoundRect(-px, -py, b.width + px, sl.height + py, r, r, bp)
+        }
 
         val n = visibleChars(t, ms)
         if (n < 0) {

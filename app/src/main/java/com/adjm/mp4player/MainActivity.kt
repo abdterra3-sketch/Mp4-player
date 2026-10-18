@@ -625,6 +625,69 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             }.setNegativeButton("Batal", null).show()
     }
 
+    // ---------- Warna teks & kotak latar ----------
+    private val textColors = listOf(
+        0xFFFFFFFFL, 0xFF000000L, 0xFFFF1744L, 0xFFFF9100L, 0xFFFFEA00L, 0xFF00E676L,
+        0xFF00E5FFL, 0xFF2979FFL, 0xFFD500F9L, 0xFFFF4081L, 0xFFBDBDBDL, 0xFF8D6E63L
+    ).map { it.toInt() }
+
+    private val bgColors = listOf(
+        0L, 0xB3000000L, 0xFF000000L, 0xCCFFFFFFL, 0xFFFFFFFFL, 0xFFE53935L,
+        0xFFFB8C00L, 0xFFFDD835L, 0xFF43A047L, 0xFF1E88E5L, 0xFF8E24AAL, 0xFFD81B60L
+    ).map { it.toInt() }
+
+    private fun selectedText(): TextItem? =
+        proj.texts.getOrNull(if (timeline.selKind == TimelineView.TEXT) timeline.selIdx else -1)
+
+    /** Pastikan teks terlihat di layar utama setelah warnanya diubah. */
+    private fun showTextNow(t: TextItem) {
+        if (viewMs < t.startMs || viewMs >= t.endMs) onPreviewAt((t.startMs + t.endMs) / 2)
+        else syncOverlays()
+    }
+
+    private fun showPalette(title: String, colors: List<Int>, onPick: (Int) -> Unit) {
+        val holder = arrayOfNulls<AlertDialog>(1)
+        val grid = LinearLayout(this)
+        grid.orientation = LinearLayout.VERTICAL
+        grid.setPadding(dp(10f), dp(6f), dp(10f), 0)
+        var row: LinearLayout? = null
+        colors.forEachIndexed { i, col ->
+            if (i % 6 == 0) {
+                row = LinearLayout(this)
+                grid.addView(row)
+            }
+            val cell = TextView(this)
+            cell.gravity = Gravity.CENTER
+            cell.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(if (col == 0) Color.TRANSPARENT else col)
+                setStroke(dp(2f), 0xFF888888.toInt())
+            }
+            if (col == 0) { cell.text = "✕"; cell.textSize = 18f }
+            val lp = LinearLayout.LayoutParams(dp(44f), dp(44f))
+            lp.setMargins(dp(6f), dp(6f), dp(6f), dp(6f))
+            cell.setOnClickListener { onPick(col); holder[0]?.dismiss() }
+            row!!.addView(cell, lp)
+        }
+        holder[0] = AlertDialog.Builder(this).setTitle(title).setView(grid).setNegativeButton("Tutup", null).show()
+    }
+
+    private fun chooseTextColor() {
+        val t = selectedText()
+        if (t == null) { toast("Pilih blok teks dulu"); return }
+        showPalette("Warna teks", textColors) { col ->
+            pushUndo(); t.color = col; showTextNow(t)
+        }
+    }
+
+    private fun chooseBgColor() {
+        val t = selectedText()
+        if (t == null) { toast("Pilih blok teks dulu"); return }
+        showPalette("Kotak latar teks (✕ = tanpa latar)", bgColors) { col ->
+            pushUndo(); t.bgColor = col; showTextNow(t)
+        }
+    }
+
     // ---------- Sampul ----------
     private fun onCoverClick() {
         if (coverUri == null) { pickCover.launch(arrayOf("image/*")); return }
@@ -741,6 +804,8 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 pbtn("✎ Edit") { editText() }
                 pbtn("Aa Font") { chooseFont() }
                 pbtn("🎬 Animasi") { chooseAnim() }
+                pbtn("🎨 Warna") { chooseTextColor() }
+                pbtn("▭ Latar") { chooseBgColor() }
                 pbtn("✂ Potong") { splitAtPlayhead() }
                 pbtn("🗑 Hapus") { deleteSelected() }
                 pbtn("A+") { resizeSelected(1.1f) }

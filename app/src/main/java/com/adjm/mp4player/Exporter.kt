@@ -76,6 +76,14 @@ class FrameOverlay(
 class Exporter(private val ctx: Context) {
     var transformer: Transformer? = null
 
+    /** Memaksa jalur audio tetap ada (dipanggil lewat refleksi supaya aman di berbagai versi library). */
+    private fun forceAudio(target: Any) {
+        try {
+            target.javaClass.getMethod("experimentalSetForceAudioTrack", java.lang.Boolean.TYPE).invoke(target, true)
+        } catch (_: Exception) {
+        }
+    }
+
     /** Pengatur volume (1.0 = normal, 0 = bisu, 2.0 = dua kali lebih keras). */
     private fun audioFx(volume: Float): List<AudioProcessor> {
         if (volume == 1f) return emptyList()
@@ -122,7 +130,7 @@ class Exporter(private val ctx: Context) {
                     .setEffects(Effects(emptyList(), listOf(Presentation.createForWidthAndHeight(outW, outH, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP))))
                     .build()
             )
-            vb.experimentalSetForceAudioTrack(true)
+            forceAudio(vb)
         }
         for (c in proj.clips) {
             val mi = MediaItem.Builder().setUri(c.uri)
@@ -189,6 +197,7 @@ class Exporter(private val ctx: Context) {
         if (has) seqs.add(ab.build())
 
         val cb = Composition.Builder(seqs)
+        if (hasCover) forceAudio(cb)
         if (proj.texts.isNotEmpty() || proj.overlays.isNotEmpty()) {
             val ov = FrameOverlay(ctx, proj.texts.map { it.copy() }, proj.overlays.map { it.copy() }, outW, outH, off)
             cb.setEffects(Effects(emptyList(), listOf(OverlayEffect(ImmutableList.of<androidx.media3.effect.TextureOverlay>(ov)))))

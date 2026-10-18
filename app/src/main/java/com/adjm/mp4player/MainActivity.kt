@@ -73,6 +73,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     private var effectIdx = 0
     private var coverUri: Uri? = null
     private var coverSec = 2
+    private var draftPending = false
     private var mode = 0
     private var fullscreen = false
     private val undoStack = ArrayList<Snapshot>()
@@ -89,11 +90,12 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     )
 
     // ---------- Pemilih file ----------
-    private val pickVideo = registerForActivityResult(ActivityResultContracts.GetContent()) { it?.let { u -> addVideo(u) } }
-    private val pickAudio = registerForActivityResult(ActivityResultContracts.GetContent()) { it?.let { u -> addAudio(u) } }
-    private val pickOverlay = registerForActivityResult(ActivityResultContracts.GetContent()) { it?.let { u -> addOverlay(u) } }
-    private val pickCover = registerForActivityResult(ActivityResultContracts.GetContent()) { u ->
+    private val pickVideo = registerForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { u -> persist(u); addVideo(u) } }
+    private val pickAudio = registerForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { u -> persist(u); addAudio(u) } }
+    private val pickOverlay = registerForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { u -> persist(u); addOverlay(u) } }
+    private val pickCover = registerForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
         if (u != null) {
+            persist(u)
             coverUri = u; coverImg.setImageBitmap(decodeScaled(this, u, 200))
             toast("Sampul akan tampil $coverSec detik di awal video hasil Save")
         }
@@ -161,9 +163,12 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
 
         setupLayerGestures()
         handler.post(tick)
+        if (Draft.exists(this)) offerDraft()
     }
 
-    override fun onPause() { super.onPause(); player.pause() }
+    override fun onPause() { super.onPause(); player.pause(); saveDraft() }
+
+    override fun onStop() { saveDraft(); super.onStop() }
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
@@ -347,7 +352,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
 
     override fun onBeginEdit() = pushUndo()
     override fun onEdited() = afterChange()
-    override fun onAddVideo() { pickVideo.launch("video/*") }
+    override fun onAddVideo() { pickVideo.launch(arrayOf("video/*")) }
 
     // ---------- Undo / redo ----------
     private fun pushUndo() { undoStack.add(proj.snap()); if (undoStack.size > 30) undoStack.removeAt(0); redoStack.clear() }
@@ -561,13 +566,72 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         afterChange()
     }
 
+    // ---------- Draf proyek ----------
+    private fun persist(uri: Uri) {
+        try {
+            contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun saveDraft() {
+        if (draftPending) return
+        val empty = proj.clips.isEmpty() && proj.texts.isEmpty() && proj.audios.isEmpty() && proj.overlays.isEmpty() && coverUri == null
+        if (empty) { Draft.clear(this); return }
+        Draft.save(this, proj, DraftSettings(portrait, res720, effectIdx, coverUri?.toString(), coverSec, curMs))
+    }
+
+    private fun offerDraft() {
+        val sum = Draft.summary(this) ?: return
+        draftPending = true
+        AlertDialog.Builder(this)
+            .setTitle("Draf proyek ditemukan")
+            .setMessage("Ada draf sebelumnya: ${sum.first} klip video, durasi ${fmt(sum.second)}.\n\nLanjutkan mengedit draf ini?")
+            .setCancelable(false)
+            .setPositiveButton("Lanjutkan") { _, _ -> draftPending = false; restoreDraft() }
+            .setNegativeButton("Mulai baru") { _, _ -> Draft.clear(this); draftPending = false }
+            .show()
+    }
+
+    private fun restoreDraft() {
+        val r = Draft.load(this, proj)
+        if (r == null) { toast("Draf tidak bisa dibuka"); return }
+        val s = r.settings
+        portrait = s.portrait; res720 = s.res720; effectIdx = s.fx; coverSec = s.coverSec
+        val cu = s.cover?.let { Uri.parse(it) }
+        val bmp = if (cu != null) decodeScaled(this, cu, 200) else null
+        if (bmp != null) { coverUri = cu; coverImg.setImageBitmap(bmp) } else { coverUri = null; coverImg.setImageDrawable(null) }
+        undoStack.clear(); redoStack.clear()
+        timeline.clearSelection()
+        curMs = s.curMs.coerceIn(0L, proj.totalMs())
+        resizeBox()
+        afterChange()
+        if (r.dropped > 0) toast("${r.dropped} file tidak bisa dibuka lagi (dihapus atau dipindah) dan dilewati")
+    }
+
+    private fun newProject() {
+        AlertDialog.Builder(this).setTitle("Proyek baru")
+            .setMessage("Semua edit pada proyek ini akan dihapus dan draf dikosongkan. Lanjutkan?")
+            .setPositiveButton("Ya, mulai baru") { _, _ ->
+                player.pause()
+                proj.clips.clear(); proj.texts.clear(); proj.audios.clear(); proj.overlays.clear()
+                coverUri = null; coverImg.setImageDrawable(null)
+                undoStack.clear(); redoStack.clear()
+                timeline.clearSelection()
+                curMs = 0L; viewOverride = null
+                Draft.clear(this)
+                afterChange()
+                showMode(0)
+            }.setNegativeButton("Batal", null).show()
+    }
+
     // ---------- Sampul ----------
     private fun onCoverClick() {
-        if (coverUri == null) { pickCover.launch("image/*"); return }
+        if (coverUri == null) { pickCover.launch(arrayOf("image/*")); return }
         AlertDialog.Builder(this).setTitle("Sampul")
             .setItems(arrayOf("Ganti foto sampul", "Lama tampil: $coverSec detik (ubah)", "Hapus sampul")) { _, which ->
                 when (which) {
-                    0 -> pickCover.launch("image/*")
+                    0 -> pickCover.launch(arrayOf("image/*"))
                     1 -> AlertDialog.Builder(this).setTitle("Lama sampul tampil")
                         .setItems(arrayOf("1 detik", "2 detik", "3 detik", "5 detik")) { _, i ->
                             coverSec = intArrayOf(1, 2, 3, 5)[i]
@@ -664,10 +728,10 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 pbtn("🗑 Hapus") { deleteSelected() }
                 pbtn("⟲ Reset zoom") { clipAt(viewMs)?.let { it.scale = 1f; it.tx = 0f; it.ty = 0f }; applyClipTransform() }
                 pbtn("🔊 Volume") { volumeForVideo() }
-                pbtn("+ Video") { pickVideo.launch("video/*") }
+                pbtn("+ Video") { pickVideo.launch(arrayOf("video/*")) }
             }
             2 -> {
-                pbtn("+ Audio") { pickAudio.launch("audio/*") }
+                pbtn("+ Audio") { pickAudio.launch(arrayOf("audio/*")) }
                 pbtn("🔊 Volume") { volumeForAudio() }
                 pbtn("✂ Potong") { splitAtPlayhead() }
                 pbtn("🗑 Hapus") { deleteSelected() }
@@ -691,9 +755,10 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 pbtn((if (!portrait) "✔ " else "") + "16:9") { portrait = false; resizeBox(); showMode(6) }
                 pbtn((if (res720) "✔ " else "") + "720p") { res720 = true; showMode(6) }
                 pbtn((if (!res720) "✔ " else "") + "1080p") { res720 = false; showMode(6) }
+                pbtn("🆕 Proyek baru") { newProject() }
             }
             5 -> {
-                pbtn("+ Overlay") { pickOverlay.launch("image/*") }
+                pbtn("+ Overlay") { pickOverlay.launch(arrayOf("image/*")) }
                 pbtn("✂ Potong") { splitAtPlayhead() }
                 pbtn("🗑 Hapus") { deleteSelected() }
                 pbtn("+ Besar") { resizeSelected(1.15f) }

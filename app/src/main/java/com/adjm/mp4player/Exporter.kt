@@ -207,7 +207,9 @@ class Exporter(private val ctx: Context) {
     companion object {
         private fun stamp() = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
 
-        fun saveVideo(ctx: Context, src: File): Boolean = try {
+        class SaveResult(val uri: Uri?, val where: String, val error: String?)
+
+        fun saveVideo(ctx: Context, src: File): SaveResult = try {
             val name = "ADJM_${stamp()}.mp4"
             if (Build.VERSION.SDK_INT >= 29) {
                 val cv = ContentValues().apply {
@@ -220,15 +222,23 @@ class Exporter(private val ctx: Context) {
                 ctx.contentResolver.openOutputStream(uri)!!.use { o -> src.inputStream().use { it.copyTo(o) } }
                 cv.clear(); cv.put(MediaStore.Video.Media.IS_PENDING, 0)
                 ctx.contentResolver.update(uri, cv, null, null)
+                SaveResult(uri, "Movies/ADJM-MP4/$name", null)
             } else {
                 val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "ADJM-MP4")
                 dir.mkdirs()
                 val f = File(dir, name)
                 src.copyTo(f, true)
-                MediaScannerConnection.scanFile(ctx, arrayOf(f.absolutePath), arrayOf("video/mp4"), null)
+                var scanned: Uri? = null
+                val latch = java.util.concurrent.CountDownLatch(1)
+                MediaScannerConnection.scanFile(ctx, arrayOf(f.absolutePath), arrayOf("video/mp4")) { _, u ->
+                    scanned = u; latch.countDown()
+                }
+                latch.await(3, java.util.concurrent.TimeUnit.SECONDS)
+                SaveResult(scanned, f.absolutePath, if (scanned == null) "Video tersimpan tetapi belum terdaftar di galeri" else null)
             }
-            true
-        } catch (e: Exception) { false }
+        } catch (e: Exception) {
+            SaveResult(null, "", e.message ?: e.javaClass.simpleName)
+        }
 
         /** Simpan foto sampul (crop tengah sesuai rasio video) ke galeri. */
         fun saveCover(ctx: Context, uri: Uri, outW: Int, outH: Int): Boolean = try {
@@ -243,12 +253,12 @@ class Exporter(private val ctx: Context) {
                 val cv = ContentValues().apply {
                     put(MediaStore.Images.Media.DISPLAY_NAME, name)
                     put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ADJM-MP4")
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ADJM-Sampul")
                 }
                 val u = ctx.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)!!
                 ctx.contentResolver.openOutputStream(u)!!.use { bmp.compress(Bitmap.CompressFormat.JPEG, 92, it) }
             } else {
-                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "ADJM-MP4")
+                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "ADJM-Sampul")
                 dir.mkdirs()
                 val f = File(dir, name)
                 f.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 92, it) }

@@ -57,24 +57,39 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent" />
         </FrameLayout>
+
+        <TextView
+            android:id="@+id/btnFull"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:layout_gravity="bottom|start"
+            android:layout_margin="10dp"
+            android:gravity="center"
+            android:text="⛶"
+            android:textColor="#FFFFFF"
+            android:textSize="34sp" />
     </FrameLayout>
 
-    <LinearLayout
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="44dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp">
-        <TextView android:id="@+id/btnFull" style="@style/Ctl" android:text="⛶" />
-        <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
-        <TextView android:id="@+id/btnRatio" style="@style/Ctl" android:text="9:16" />
-        <TextView android:id="@+id/btnRes" style="@style/Ctl" android:text="720p" />
-        <TextView android:id="@+id/btnPlay" style="@style/Ctl" android:text="▶" android:textSize="24sp" />
-        <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
-        <TextView android:id="@+id/btnUndo" style="@style/Ctl" android:text="↶" />
-        <TextView android:id="@+id/btnRedo" style="@style/Ctl" android:text="↷" />
-    </LinearLayout>
+        android:layout_height="52dp">
+        <TextView
+            android:id="@+id/btnPlay"
+            style="@style/Ctl"
+            android:layout_width="72dp"
+            android:layout_gravity="center"
+            android:text="▶"
+            android:textSize="30sp" />
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:layout_gravity="end"
+            android:orientation="horizontal"
+            android:paddingEnd="8dp">
+            <TextView android:id="@+id/btnUndo" style="@style/Ctl" android:text="↶" />
+            <TextView android:id="@+id/btnRedo" style="@style/Ctl" android:text="↷" />
+        </LinearLayout>
+    </FrameLayout>
 
     <LinearLayout
         android:id="@+id/editArea"
@@ -82,20 +97,9 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/tvTime"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingStart="14dp"
-            android:paddingTop="2dp"
-            android:paddingBottom="2dp"
-            android:text="00:00 / 00:00"
-            android:textColor="#CCCCCC"
-            android:textSize="13sp" />
-
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="190dp"
+            android:layout_height="210dp"
             android:orientation="horizontal">
             <FrameLayout
                 android:id="@+id/coverBox"
@@ -122,7 +126,24 @@
                 android:id="@+id/timelineHolder"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
-                android:layout_weight="1" />
+                android:layout_weight="1">
+                <!-- Penghitung waktu: tetap di tempat, tidak ikut bergeser -->
+                <TextView
+                    android:id="@+id/tvTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="22dp"
+                    android:layout_gravity="top|start"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginTop="1dp"
+                    android:background="#FF0000"
+                    android:gravity="center"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:text="00:00/00:00"
+                    android:textColor="#FFFFFF"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+            </FrameLayout>
         </LinearLayout>
 
         <HorizontalScrollView
@@ -153,6 +174,7 @@
             <TextView android:id="@+id/bText" style="@style/Tool" android:text="T\nTeks" />
             <TextView android:id="@+id/bFx" style="@style/Tool" android:text="✦\nEfek" />
             <TextView android:id="@+id/bOverlay" style="@style/Tool" android:text="▣\nOverlay" />
+            <TextView android:id="@+id/bFormat" style="@style/Tool" android:text="▭\nFormat" />
             <TextView
                 android:id="@+id/bSave"
                 style="@style/Tool"

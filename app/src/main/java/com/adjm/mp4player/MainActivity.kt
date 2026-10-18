@@ -776,7 +776,41 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     }
 
     // ---------- Simpan ----------
+    /** Bila audio/teks/overlay melewati akhir video, tanyakan dulu: dipotong atau video diperpanjang. */
     private fun startExport() {
+        if (proj.clips.isEmpty()) { toast("Belum ada video. Tekan + di timeline"); return }
+        val total = proj.totalMs()
+        val end = maxOf(
+            total,
+            proj.texts.maxOfOrNull { it.endMs } ?: 0L,
+            proj.overlays.maxOfOrNull { it.endMs } ?: 0L,
+            proj.audios.maxOfOrNull { it.endMs } ?: 0L
+        )
+        if (end - total > 1000) {
+            AlertDialog.Builder(this)
+                .setTitle("Ada bagian melewati akhir video")
+                .setMessage("Durasi video ${fmt(total)}, tetapi audio/teks/overlay berlanjut sampai ${fmt(end)}.\n\nJika dilanjutkan, hasil berdurasi ${fmt(end)} dan frame terakhir ditahan (proses lebih lama).")
+                .setPositiveButton("Potong di akhir video") { _, _ -> trimToVideoEnd(); doExport() }
+                .setNeutralButton("Tetap ${fmt(end)}") { _, _ -> doExport() }
+                .setNegativeButton("Batal", null)
+                .show()
+        } else doExport()
+    }
+
+    private fun trimToVideoEnd() {
+        val total = proj.totalMs()
+        pushUndo()
+        proj.texts.removeAll { it.startMs >= total }
+        proj.texts.forEach { if (it.endMs > total) it.endMs = total }
+        proj.overlays.removeAll { it.startMs >= total }
+        proj.overlays.forEach { if (it.endMs > total) it.endMs = total }
+        proj.audios.removeAll { it.startMs >= total }
+        proj.audios.forEach { if (it.endMs > total) it.outMs = it.inMs + (total - it.startMs) }
+        timeline.clearSelection()
+        afterChange()
+    }
+
+    private fun doExport() {
         if (proj.clips.isEmpty()) { toast("Belum ada video. Tekan + di timeline"); return }
         if (Build.VERSION.SDK_INT < 29 &&
             checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
@@ -802,11 +836,41 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 dlg.dismiss()
                 if (!ok) { toast("Gagal: ${err ?: "tidak diketahui"}"); return@start }
                 io.execute {
-                    val saved = Exporter.saveVideo(this, tmp)
+                    // periksa hasil video sebelum disimpan
+                    var durMs = 0L
+                    try {
+                        val r = MediaMetadataRetriever(); r.setDataSource(tmp.absolutePath)
+                        durMs = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                        r.release()
+                    } catch (_: Exception) {}
+                    val sizeKb = tmp.length() / 1024
+                    if (sizeKb < 20 || durMs <= 0) {
+                        tmp.delete()
+                        runOnUiThread { toast("Hasil video kosong (ukuran ${sizeKb} KB). Coba lagi tanpa efek/overlay, lalu kabari saya.") }
+                        return@execute
+                    }
+                    val res = Exporter.saveVideo(this, tmp)
                     val cv = coverUri
-                    if (cv != null) Exporter.saveCover(this, cv, w, h)
+                    val coverOk = if (cv != null) Exporter.saveCover(this, cv, w, h) else false
                     tmp.delete()
-                    runOnUiThread { toast(if (saved) "Tersimpan di galeri (Movies/ADJM-MP4)" else "Gagal menyimpan ke galeri") }
+                    runOnUiThread {
+                        val sb = StringBuilder()
+                        if (res.uri != null || res.error == null) {
+                            sb.append("Video: ${res.where}\nDurasi: ${fmt(durMs)}  •  Ukuran: ${"%.1f".format(sizeKb / 1024f)} MB")
+                            sb.append("\nBuka aplikasi Galeri → tab Video / album ADJM-MP4.")
+                        } else sb.append("Gagal menyimpan video: ${res.error}")
+                        if (cv != null) sb.append("\n\nSampul disimpan sebagai gambar di album ADJM-Sampul" + if (coverOk) "." else " (gagal).")
+                        val b = AlertDialog.Builder(this).setTitle(if (res.uri != null) "Video tersimpan" else "Hasil penyimpanan")
+                            .setMessage(sb.toString()).setPositiveButton("OK", null)
+                        if (res.uri != null) b.setNeutralButton("Putar") { _, _ ->
+                            try {
+                                startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW)
+                                    .setDataAndType(res.uri, "video/mp4")
+                                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                            } catch (e: Exception) { toast("Tidak ada aplikasi pemutar video") }
+                        }
+                        b.show()
+                    }
                 }
             }
             val holderP = androidx.media3.transformer.ProgressHolder()

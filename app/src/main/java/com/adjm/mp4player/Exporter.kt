@@ -13,6 +13,9 @@ import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
 import androidx.media3.common.*
+import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.common.audio.ChannelMixingAudioProcessor
+import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.MatrixTransformation
 import androidx.media3.effect.OverlayEffect
@@ -97,6 +100,15 @@ class FrameOverlay(
 class Exporter(private val ctx: Context) {
     var transformer: Transformer? = null
 
+    /** Pengatur volume (1.0 = normal, 0 = bisu, 2.0 = dua kali lebih keras). */
+    private fun audioFx(volume: Float): List<AudioProcessor> {
+        if (volume == 1f) return emptyList()
+        val p = ChannelMixingAudioProcessor()
+        p.putChannelMixingMatrix(ChannelMixingMatrix.create(1, 1).scaleBy(volume))
+        p.putChannelMixingMatrix(ChannelMixingMatrix.create(2, 2).scaleBy(volume))
+        return listOf(p)
+    }
+
     fun start(proj: Project, outW: Int, outH: Int, fx: List<Effect>, out: File, done: (Boolean, String?) -> Unit): Transformer {
         val vidTotal = proj.totalMs()
         // panjang akhir: video, atau teks/overlay/audio yang melewati akhir video
@@ -126,7 +138,7 @@ class Exporter(private val ctx: Context) {
                     MediaItem.ClippingConfiguration.Builder()
                         .setStartPositionMs(c.inMs).setEndPositionMs(c.outMs).build()
                 ).build()
-            vb.addItem(EditedMediaItem.Builder(mi).setEffects(Effects(emptyList(), effectsFor(c))).build())
+            vb.addItem(EditedMediaItem.Builder(mi).setEffects(Effects(audioFx(c.volume), effectsFor(c))).build())
         }
 
         // --- Perpanjangan: frame terakhir ditahan bila narasi/teks lebih panjang dari video ---
@@ -178,7 +190,7 @@ class Exporter(private val ctx: Context) {
                     MediaItem.ClippingConfiguration.Builder()
                         .setStartPositionMs(inMs).setEndPositionMs(inMs + len).build()
                 ).build()
-            ab.addItem(EditedMediaItem.Builder(mi).setRemoveVideo(true).build())
+            ab.addItem(EditedMediaItem.Builder(mi).setRemoveVideo(true).setEffects(Effects(audioFx(a.volume), emptyList())).build())
             cursor = s + len
             has = true
         }

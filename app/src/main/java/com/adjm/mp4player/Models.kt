@@ -8,7 +8,8 @@ object Ids { private var n = 1L; fun next() = n++ }
 data class Clip(
     val id: Long = Ids.next(), val uri: Uri, val srcMs: Long,
     var inMs: Long = 0, var outMs: Long = srcMs,
-    var scale: Float = 1f, var tx: Float = 0f, var ty: Float = 0f
+    var scale: Float = 1f, var tx: Float = 0f, var ty: Float = 0f,
+    var volume: Float = 1f
 ) { val durMs: Long get() = outMs - inMs }
 
 data class TextItem(
@@ -24,7 +25,8 @@ data class OverlayItem(
 
 data class AudioItem(
     val id: Long = Ids.next(), val uri: Uri, val name: String, val srcMs: Long,
-    var startMs: Long, var inMs: Long = 0, var outMs: Long = srcMs
+    var startMs: Long, var inMs: Long = 0, var outMs: Long = srcMs,
+    var volume: Float = 1f
 ) {
     val durMs: Long get() = outMs - inMs
     val endMs: Long get() = startMs + outMs - inMs

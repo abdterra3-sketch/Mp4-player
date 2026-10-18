@@ -200,6 +200,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
 
     private val tick = object : Runnable {
         override fun run() {
+            applyVolume()
             if (player.isPlaying) {
                 curMs = timelinePos()
                 timeline.scrollToMs(curMs)
@@ -299,6 +300,8 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 try { MediaPlayer().apply { setDataSource(this@MainActivity, a.uri); prepare() } } catch (_: Exception) { return@getOrPut MediaPlayer() }
             }
             try {
+                val vol = min(1f, a.volume)
+                mp.setVolume(vol, vol)
                 val inRange = curMs >= a.startMs && curMs < a.endMs
                 if (playing && inRange) {
                     if (!mp.isPlaying) { mp.seekTo((a.inMs + curMs - a.startMs).toInt()); mp.start() }
@@ -541,6 +544,68 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         afterChange()
     }
 
+    // ---------- Volume ----------
+    private fun applyVolume() {
+        val v = min(1f, clipAt(viewMs)?.volume ?: 1f)
+        if (player.volume != v) player.volume = v
+    }
+
+    private fun showVolumeDialog(title: String, current: Float, onSet: (Float) -> Unit) {
+        val label = TextView(this)
+        label.text = "${(current * 100).toInt()}%"
+        label.textSize = 22f
+        label.gravity = Gravity.CENTER
+        val sb = SeekBar(this)
+        sb.max = 200
+        sb.progress = (current * 100).toInt().coerceIn(0, 200)
+        sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                label.text = "$p%"
+                onSet(p / 100f)
+            }
+            override fun onStartTrackingTouch(s: SeekBar?) {}
+            override fun onStopTrackingTouch(s: SeekBar?) {}
+        })
+        val note = TextView(this)
+        note.text = "0% = bisu, 100% = normal. Di atas 100% suara hanya naik pada hasil Save, bukan saat pratinjau."
+        note.textSize = 12f
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER
+        for ((name, value) in listOf("🔇 Bisu" to 0, "30%" to 30, "50%" to 50, "100%" to 100, "150%" to 150)) {
+            val b = TextView(this)
+            b.text = name
+            b.setPadding(dp(10f), dp(10f), dp(10f), dp(10f))
+            b.setOnClickListener { sb.progress = value }
+            row.addView(b)
+        }
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(dp(22f), dp(10f), dp(22f), 0)
+        box.addView(label)
+        box.addView(sb)
+        box.addView(row)
+        box.addView(note)
+        AlertDialog.Builder(this).setTitle(title).setView(box)
+            .setPositiveButton("OK") { _, _ -> timeline.refresh() }
+            .setOnDismissListener { timeline.refresh() }
+            .show()
+    }
+
+    private fun volumeForVideo() {
+        val c = if (timeline.selKind == TimelineView.VIDEO) proj.clips.getOrNull(timeline.selIdx) else clipAt(viewMs)
+        if (c == null) { toast("Tambahkan video dulu"); return }
+        pushUndo()
+        showVolumeDialog("Volume suara video (latar)", c.volume) { c.volume = it }
+    }
+
+    private fun volumeForAudio() {
+        val a = if (timeline.selKind == TimelineView.AUDIO) proj.audios.getOrNull(timeline.selIdx) else null
+        if (a == null) { toast("Pilih blok audio (warna hijau) di timeline dulu"); return }
+        pushUndo()
+        showVolumeDialog("Volume audio: ${a.name}", a.volume) { a.volume = it }
+    }
+
     // ---------- Panel mode ----------
     private fun pbtn(label: String, onClick: () -> Unit) {
         val t = TextView(this)
@@ -564,10 +629,12 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 pbtn("✂ Potong") { splitAtPlayhead() }
                 pbtn("🗑 Hapus") { deleteSelected() }
                 pbtn("⟲ Reset zoom") { clipAt(viewMs)?.let { it.scale = 1f; it.tx = 0f; it.ty = 0f }; applyClipTransform() }
+                pbtn("🔊 Volume") { volumeForVideo() }
                 pbtn("+ Video") { pickVideo.launch("video/*") }
             }
             2 -> {
                 pbtn("+ Audio") { pickAudio.launch("audio/*") }
+                pbtn("🔊 Volume") { volumeForAudio() }
                 pbtn("✂ Potong") { splitAtPlayhead() }
                 pbtn("🗑 Hapus") { deleteSelected() }
             }

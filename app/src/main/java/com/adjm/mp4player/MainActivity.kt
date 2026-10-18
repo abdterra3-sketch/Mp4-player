@@ -76,7 +76,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     private var fullscreen = false
     private val undoStack = ArrayList<Snapshot>()
     private val redoStack = ArrayList<Snapshot>()
-    private val textViews = HashMap<Long, OutlineTextView>()
+    private val textViews = HashMap<Long, AnimTextView>()
     private val ovViews = HashMap<Long, ImageView>()
     private val audioPlayers = HashMap<Long, MediaPlayer>()
     private var exporter: Exporter? = null
@@ -465,6 +465,19 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         }
     }
 
+    private fun chooseAnim() {
+        val idx = if (timeline.selKind == TimelineView.TEXT) timeline.selIdx else -1
+        val t = proj.texts.getOrNull(idx)
+        if (t == null) { toast("Pilih blok teks dulu"); return }
+        AlertDialog.Builder(this).setTitle("Animasi teks")
+            .setSingleChoiceItems(TextAnims.names.toTypedArray(), t.anim) { d, which ->
+                pushUndo(); t.anim = which; d.dismiss()
+                curMs = t.startMs; viewOverride = null
+                timeline.scrollToMs(curMs); seekToTimeline(curMs); updateAll()
+                if (which != 0) toast("Tekan ▶ untuk melihat animasi")
+            }.show()
+    }
+
     private fun chooseFont() {
         val t = proj.texts.getOrNull(if (timeline.selKind == TimelineView.TEXT) timeline.selIdx else -1)
         if (t == null) { toast("Pilih blok teks dulu"); return }
@@ -642,6 +655,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 pbtn("+ Teks") { addText() }
                 pbtn("✎ Edit") { editText() }
                 pbtn("Aa Font") { chooseFont() }
+                pbtn("🎬 Animasi") { chooseAnim() }
                 pbtn("✂ Potong") { splitAtPlayhead() }
                 pbtn("🗑 Hapus") { deleteSelected() }
                 pbtn("A+") { resizeSelected(1.1f) }
@@ -716,19 +730,13 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         textViews.keys.filter { it !in tids }.forEach { k -> textViews.remove(k)?.let { layer.removeView(it) } }
         proj.texts.forEachIndexed { i, t ->
             val tv = textViews.getOrPut(t.id) { makeTextView(t.id).also { layer.addView(it) } }
-            tv.text = t.text
-            tv.typeface = TextFonts.typeface(this, t.font)
-            tv.outline = TextFonts.outline(t.font)
-            tv.paint.textSkewX = TextFonts.skew(t.font)
-            tv.setTextSize(TypedValue.COMPLEX_UNIT_PX, t.size * w)
-            tv.maxWidth = (w * 0.9f).toInt()
             val vis = viewMs >= t.startMs && viewMs < t.endMs
             tv.visibility = if (vis) View.VISIBLE else View.GONE
             if (vis) {
-                tv.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.AT_MOST), View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.AT_MOST))
-                tv.x = t.nx * w - tv.measuredWidth / 2f
-                tv.y = t.ny * h - tv.measuredHeight / 2f
-                tv.background = if (timeline.selKind == TimelineView.TEXT && timeline.selIdx == i) selBg() else null
+                val sel = timeline.selKind == TimelineView.TEXT && timeline.selIdx == i
+                val (tw, th) = tv.bind(t, w, h, viewMs, sel)
+                tv.x = t.nx * w - tw / 2f
+                tv.y = t.ny * h - th / 2f
             }
         }
 
@@ -757,13 +765,9 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         }
     }
 
-    private fun makeTextView(id: Long): OutlineTextView {
-        val tv = OutlineTextView(this)
-        tv.setPadding(dp(6f), dp(2f), dp(6f), dp(2f))
-        tv.setTextColor(Color.WHITE); tv.typeface = android.graphics.Typeface.DEFAULT_BOLD
-        tv.gravity = Gravity.CENTER
-        tv.setShadowLayer(8f, 0f, 2f, 0xCC000000.toInt())
-        tv.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+    private fun makeTextView(id: Long): AnimTextView {
+        val tv = AnimTextView(this)
+        tv.layoutParams = FrameLayout.LayoutParams(10, 10)
         makeDraggable(tv, TimelineView.TEXT, id)
         return tv
     }

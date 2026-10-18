@@ -52,12 +52,12 @@ class FrameOverlay(
         val ms = presentationTimeUs / 1000
         val at = texts.filter { ms >= it.startMs && ms < it.endMs }
         val ao = ovs.filter { ms >= it.startMs && ms < it.endMs }
-        val key = at.joinToString(",") { it.id.toString() } + "|" + ao.joinToString(",") { it.id.toString() }
-        if (key != lastKey) { last = render(at, ao); lastKey = key }
+        val key = at.joinToString(",") { it.id.toString() + ":" + TextRender.stateKey(it, ms) } + "|" + ao.joinToString(",") { it.id.toString() }
+        if (key != lastKey) { last = render(at, ao, ms); lastKey = key }
         return last
     }
 
-    private fun render(at: List<TextItem>, ao: List<OverlayItem>): Bitmap {
+    private fun render(at: List<TextItem>, ao: List<OverlayItem>, ms: Long): Bitmap {
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         for (o in ao) {
@@ -67,32 +67,7 @@ class FrameOverlay(
             val cx = o.nx * w; val cy = o.ny * h
             c.drawBitmap(src, null, RectF(cx - tw / 2f, cy - th / 2f, cx + tw / 2f, cy + th / 2f), null)
         }
-        for (t in at) {
-            val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.WHITE; textSize = t.size * w
-                typeface = TextFonts.typeface(ctx, t.font)
-                textSkewX = TextFonts.skew(t.font)
-                setShadowLayer(t.size * w / 10f, 0f, 2f, 0xCC000000.toInt())
-            }
-            val maxW = (w * 0.9f).toInt()
-            val desired = ceil(StaticLayout.getDesiredWidth(t.text, tp)).toInt().coerceIn(1, maxW)
-            val sl = StaticLayout.Builder.obtain(t.text, 0, t.text.length, tp, desired)
-                .setAlignment(Layout.Alignment.ALIGN_CENTER).build()
-            c.save()
-            c.translate(t.nx * w - desired / 2f, t.ny * h - sl.height / 2f)
-            if (TextFonts.outline(t.font)) {
-                tp.style = Paint.Style.STROKE
-                tp.strokeWidth = t.size * w * 0.16f
-                tp.strokeJoin = Paint.Join.ROUND
-                tp.color = Color.BLACK
-                tp.clearShadowLayer()
-                sl.draw(c)
-                tp.style = Paint.Style.FILL
-                tp.color = Color.WHITE
-            }
-            sl.draw(c)
-            c.restore()
-        }
+        for (t in at) TextRender.drawCentered(ctx, c, t, w, h, ms)
         return bmp
     }
 }

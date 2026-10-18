@@ -15,7 +15,7 @@ data class Clip(
 data class TextItem(
     val id: Long = Ids.next(), var text: String, var startMs: Long, var endMs: Long,
     var nx: Float = 0.5f, var ny: Float = 0.5f, var size: Float = 0.07f,
-    var font: Int = 0
+    var font: Int = 0, var anim: Int = 0
 )
 
 data class OverlayItem(

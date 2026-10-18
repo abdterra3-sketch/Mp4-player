@@ -136,6 +136,27 @@ class ThumbView(
     }
 }
 
+/** Penggaris waktu di atas timeline: titik tiap detik, angka tiap 2 detik. */
+class RulerView(ctx: Context, private val pps: Float, private val half: Int, private val endMs: Long) : View(ctx) {
+    private val tp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFB0B0B0.toInt(); textSize = ctx.dp(11f).toFloat(); textAlign = Paint.Align.LEFT
+    }
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF8A8A8A.toInt() }
+
+    override fun onDraw(c: Canvas) {
+        val vis = c.clipBounds
+        val first = max(0, ((vis.left - half) / pps).toInt() - 1)
+        val last = min(((vis.right - half) / pps).toInt() + 1, (endMs / 1000L).toInt() + 1)
+        val cy = height / 2f
+        val baseline = cy - (tp.ascent() + tp.descent()) / 2f
+        val r = context.dp(1.6f).toFloat()
+        for (i in first..last) {
+            val x = half + i * pps
+            if (i % 2 == 0) c.drawText(fmt(i * 1000L), x + context.dp(5f), baseline, tp) else c.drawCircle(x, cy, r, dot)
+        }
+    }
+}
+
 /** Blok teks / audio / overlay dengan pegangan tarik di kiri dan kanan. */
 class BlockView(ctx: Context, private val text: String, private val bg: Int) : View(ctx) {
     var sel = false
@@ -273,6 +294,16 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
         addView(vsv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         vsv.addView(hsv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         hsv.addView(content, LayoutParams(10, LayoutParams.MATCH_PARENT))
+        // tombol + tetap di tempat (tidak ikut bergeser saat timeline berjalan)
+        val plus = TextView(ctx).apply {
+            text = "+"; textSize = 24f; gravity = Gravity.CENTER; setTextColor(Color.BLACK)
+            background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = context.dp(6f).toFloat() }
+            setOnClickListener { listener?.onAddVideo() }
+        }
+        val plp = LayoutParams(context.dp(40f), context.dp(40f), Gravity.TOP or Gravity.END)
+        plp.topMargin = top(VIDEO) + context.dp(6f)
+        plp.rightMargin = context.dp(8f)
+        addView(plus, plp)
         val head = View(ctx).apply { setBackgroundColor(Color.WHITE) }
         addView(head, LayoutParams(context.dp(2f), LayoutParams.MATCH_PARENT, Gravity.CENTER_HORIZONTAL))
     }
@@ -300,7 +331,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
         if (notify) listener?.onSelect(kind, idx)
     }
 
-    private fun top(kind: Int) = context.dp(6f)
+    private fun top(kind: Int) = context.dp(26f)
     private fun laneH() = context.dp(32f)
     private fun laneGap() = context.dp(4f)
     private fun topOf(kind: Int, idx: Int): Int =
@@ -362,7 +393,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
         val total = proj.totalMs()
         // susun baris: teks, audio, overlay ditumpuk ke bawah bila waktunya bertabrakan
         laneOf.clear()
-        var y = context.dp(64f)
+        var y = context.dp(84f)
         val groups = listOf(
             TEXT to proj.texts.map { Pair(it.startMs, it.endMs) },
             AUDIO to proj.audios.map { Pair(it.startMs, it.endMs) },
@@ -379,6 +410,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
         val cw = (width + timelineEnd() * pps / 1000f).toInt()
         content.layoutParams = LayoutParams(cw, contentH)
         content.removeAllViews(); blocks.clear()
+        content.addView(RulerView(context, pps, half, timelineEnd()), LayoutParams(cw, context.dp(24f)))
 
         coverView?.let { cv ->
             (cv.parent as? ViewGroup)?.removeView(cv)
@@ -397,14 +429,6 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
             content.addView(v); blocks[VIDEO * 1000 + i] = v
             x += c.durMs
         }
-        val plus = TextView(context).apply {
-            text = "+"; textSize = 24f; gravity = Gravity.CENTER; setTextColor(Color.BLACK)
-            background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = context.dp(6f).toFloat() }
-            setOnClickListener { listener?.onAddVideo() }
-        }
-        val plp = LayoutParams(context.dp(40f), context.dp(40f))
-        plp.leftMargin = xOf(total) + context.dp(56f); plp.topMargin = top(VIDEO) + context.dp(6f)
-        content.addView(plus, plp)
 
         proj.texts.forEachIndexed { i, t ->
             val v = label(t.text, TEXT, i); place(v, t.startMs, t.endMs, TEXT, i); attach(v, TEXT, i)

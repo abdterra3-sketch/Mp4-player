@@ -56,8 +56,6 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     private lateinit var guide: GuideView
     private lateinit var tvTime: TextView
     private lateinit var btnPlay: TextView
-    private lateinit var btnRatio: TextView
-    private lateinit var btnRes: TextView
     private lateinit var panelScroll: HorizontalScrollView
     private lateinit var panelRow: LinearLayout
     private lateinit var bottomBar: LinearLayout
@@ -113,8 +111,6 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         guide = findViewById(R.id.guide)
         tvTime = findViewById(R.id.tvTime)
         btnPlay = findViewById(R.id.btnPlay)
-        btnRatio = findViewById(R.id.btnRatio)
-        btnRes = findViewById(R.id.btnRes)
         panelScroll = findViewById(R.id.panelScroll)
         panelRow = findViewById(R.id.panelRow)
         bottomBar = findViewById(R.id.bottomBar)
@@ -138,13 +134,11 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         timeline.listener = this
         val coverBox = findViewById<View>(R.id.coverBox)
         timeline.setCover(coverBox)
-        findViewById<FrameLayout>(R.id.timelineHolder).addView(timeline, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        findViewById<FrameLayout>(R.id.timelineHolder).addView(timeline, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         holder.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> resizeBox() }
 
         btnPlay.setOnClickListener { togglePlay() }
-        btnRatio.setOnClickListener { portrait = !portrait; btnRatio.text = if (portrait) "9:16" else "16:9"; resizeBox() }
-        btnRes.setOnClickListener { res720 = !res720; btnRes.text = if (res720) "720p" else "1080p" }
         findViewById<View>(R.id.btnUndo).setOnClickListener { undo() }
         findViewById<View>(R.id.btnRedo).setOnClickListener { redo() }
         findViewById<View>(R.id.btnFull).setOnClickListener {
@@ -158,6 +152,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         findViewById<View>(R.id.bText).setOnClickListener { showMode(3) }
         findViewById<View>(R.id.bFx).setOnClickListener { showMode(4) }
         findViewById<View>(R.id.bOverlay).setOnClickListener { showMode(5) }
+        findViewById<View>(R.id.bFormat).setOnClickListener { showMode(6) }
         findViewById<View>(R.id.bSave).setOnClickListener { startExport() }
 
         setupLayerGestures()
@@ -283,7 +278,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         playerView.translationY = (c?.ty ?: 0f) * box.height
     }
 
-    private fun updateTime() { tvTime.text = "${fmt(curMs)} / ${fmt(proj.totalMs())}" }
+    private fun updateTime() { tvTime.text = "${fmt(curMs)}/${fmt(proj.totalMs())}" }
     private fun updateAll() { updateTime(); syncOverlays(); applyClipTransform() }
 
     private fun afterChange() {
@@ -588,6 +583,12 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             }
             4 -> effectNames.forEachIndexed { i, n ->
                 pbtn((if (i == effectIdx) "✔ " else "") + n) { effectIdx = i; applyPreviewEffects(); showMode(4) }
+            }
+            6 -> {
+                pbtn((if (portrait) "✔ " else "") + "9:16") { portrait = true; resizeBox(); showMode(6) }
+                pbtn((if (!portrait) "✔ " else "") + "16:9") { portrait = false; resizeBox(); showMode(6) }
+                pbtn((if (res720) "✔ " else "") + "720p") { res720 = true; showMode(6) }
+                pbtn((if (!res720) "✔ " else "") + "1080p") { res720 = false; showMode(6) }
             }
             5 -> {
                 pbtn("+ Overlay") { pickOverlay.launch("image/*") }

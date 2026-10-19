@@ -11,7 +11,9 @@ data class Clip(
     var scale: Float = 1f, var tx: Float = 0f, var ty: Float = 0f,
     var volume: Float = 1f,
     var fadeInMs: Long = 0L,    // transisi memudar masuk (gelap -> terang)
-    var fadeOutMs: Long = 0L    // transisi memudar keluar (terang -> gelap)
+    var fadeOutMs: Long = 0L,   // transisi memudar keluar (terang -> gelap)
+    var afadeInMs: Long = 0L,   // fade suara video masuk
+    var afadeOutMs: Long = 0L   // fade suara video keluar
 ) { val durMs: Long get() = outMs - inMs }
 
 data class TextItem(
@@ -32,7 +34,9 @@ data class OverlayItem(
 data class AudioItem(
     val id: Long = Ids.next(), val uri: Uri, val name: String, val srcMs: Long,
     var startMs: Long, var inMs: Long = 0, var outMs: Long = srcMs,
-    var volume: Float = 1f
+    var volume: Float = 1f,
+    var fadeInMs: Long = 0L,    // fade audio masuk
+    var fadeOutMs: Long = 0L    // fade audio keluar
 ) {
     val durMs: Long get() = outMs - inMs
     val endMs: Long get() = startMs + outMs - inMs

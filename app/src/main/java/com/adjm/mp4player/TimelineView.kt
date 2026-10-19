@@ -489,7 +489,7 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
             content.addView(v); blocks[TEXT * 1000 + i] = v
         }
         proj.audios.forEachIndexed { i, a ->
-            val v = label("♪ " + a.name + (if (a.volume != 1f) "  •  " + (a.volume * 100).toInt() + "%" else ""), AUDIO, i); place(v, a.startMs, a.endMs, AUDIO, i); attach(v, AUDIO, i)
+            val v = label("♪ " + a.name + (if (a.volume != 1f) "  •  " + (a.volume * 100).toInt() + "%" else "") + (if (a.fadeInMs > 0 || a.fadeOutMs > 0) "  •  fade" else ""), AUDIO, i); place(v, a.startMs, a.endMs, AUDIO, i); attach(v, AUDIO, i)
             content.addView(v); blocks[AUDIO * 1000 + i] = v
         }
         proj.overlays.forEachIndexed { i, o ->

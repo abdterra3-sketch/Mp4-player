@@ -86,7 +86,10 @@ class Exporter(private val ctx: Context) {
     }
 
     /** Pengatur volume (1.0 = normal, 0 = bisu, 2.0 = dua kali lebih keras). */
-    private fun audioFx(volume: Float): List<AudioProcessor> {
+    private fun audioFx(volume: Float, fadeInMs: Long = 0L, fadeOutMs: Long = 0L, durMs: Long = 0L): List<AudioProcessor> {
+        if (fadeInMs > 0 || fadeOutMs > 0) {
+            return listOf(FadeGainProcessor(volume, fadeInMs * 1000, fadeOutMs * 1000, durMs * 1000))
+        }
         if (volume == 1f) return emptyList()
         val p = ChannelMixingAudioProcessor()
         p.putChannelMixingMatrix(ChannelMixingMatrix.create(1, 1).scaleBy(volume))
@@ -139,7 +142,7 @@ class Exporter(private val ctx: Context) {
                     MediaItem.ClippingConfiguration.Builder()
                         .setStartPositionMs(c.inMs).setEndPositionMs(c.outMs).build()
                 ).build()
-            vb.addItem(EditedMediaItem.Builder(mi).setEffects(Effects(audioFx(c.volume), effectsFor(c))).build())
+            vb.addItem(EditedMediaItem.Builder(mi).setEffects(Effects(audioFx(c.volume, c.afadeInMs, c.afadeOutMs, c.durMs), effectsFor(c))).build())
         }
 
         // --- Perpanjangan: frame terakhir ditahan bila narasi/teks lebih panjang dari video ---
@@ -191,7 +194,7 @@ class Exporter(private val ctx: Context) {
                     MediaItem.ClippingConfiguration.Builder()
                         .setStartPositionMs(inMs).setEndPositionMs(inMs + len).build()
                 ).build()
-            ab.addItem(EditedMediaItem.Builder(mi).setRemoveVideo(true).setEffects(Effects(audioFx(a.volume), emptyList())).build())
+            ab.addItem(EditedMediaItem.Builder(mi).setRemoveVideo(true).setEffects(Effects(audioFx(a.volume, a.fadeInMs, a.fadeOutMs, len), emptyList())).build())
             cursor = s + len
             has = true
         }

@@ -334,7 +334,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 created
             }
             try {
-                val vol = min(1f, a.volume)
+                val vol = min(1f, a.volume) * AudioFades.gain(curMs - a.startMs, a.durMs, a.fadeInMs, a.fadeOutMs)
                 mp.setVolume(vol, vol)
                 if (playing && inRange) {
                     if (!mp.isPlaying) { mp.seekTo((a.inMs + curMs - a.startMs).toInt()); mp.start() }
@@ -541,6 +541,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 pushUndo()
                 val cutIn = a.inMs + (curMs - a.startMs)
                 val n = a.copy(id = Ids.next(), startMs = curMs, inMs = cutIn)
+                n.fadeInMs = 0L; a.fadeOutMs = 0L
                 a.outMs = cutIn
                 proj.audios.add(timeline.selIdx + 1, n)
             }
@@ -554,6 +555,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                         val cut = c.inMs + local
                         val n = c.copy(id = Ids.next(), inMs = cut)
                         n.fadeInMs = 0L; c.fadeOutMs = 0L
+                        n.afadeInMs = 0L; c.afadeOutMs = 0L
                         c.outMs = cut
                         proj.clips.add(i + 1, n)
                         timeline.select(TimelineView.VIDEO, i + 1, false)
@@ -859,9 +861,53 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             }.show()
     }
 
+    // ---------- Fade audio ----------
+    private val fadeNames = arrayOf(
+        "Tanpa fade", "Masuk perlahan 1 dtk", "Keluar perlahan 1 dtk",
+        "Masuk + keluar 1 dtk", "Masuk + keluar 2 dtk", "Masuk + keluar 3 dtk"
+    )
+    private val fadeIns = longArrayOf(0, 1000, 0, 1000, 2000, 3000)
+    private val fadeOuts = longArrayOf(0, 0, 1000, 1000, 2000, 3000)
+
+    private fun showFadeDialog(title: String, curIn: Long, curOut: Long, durMs: Long, onSet: (Long, Long) -> Unit) {
+        var cur = -1
+        for (i in fadeNames.indices) if (curIn == fadeIns[i] && curOut == fadeOuts[i]) cur = i
+        AlertDialog.Builder(this).setTitle(title)
+            .setSingleChoiceItems(fadeNames, cur) { d, which ->
+                pushUndo()
+                onSet(minOf(fadeIns[which], durMs / 2), minOf(fadeOuts[which], durMs / 2))
+                d.dismiss()
+                timeline.refresh()
+                if (which != 0) toast("Fade terdengar saat diputar dan pada hasil Save")
+            }.show()
+    }
+
+    private fun fadeForVideo() {
+        val c = if (timeline.selKind == TimelineView.VIDEO) proj.clips.getOrNull(timeline.selIdx) else clipAt(viewMs)
+        if (c == null) { toast("Tambahkan video dulu"); return }
+        showFadeDialog("Fade suara video (latar)", c.afadeInMs, c.afadeOutMs, c.durMs) { i, o -> c.afadeInMs = i; c.afadeOutMs = o }
+    }
+
+    private fun fadeForAudio() {
+        val a = if (timeline.selKind == TimelineView.AUDIO) proj.audios.getOrNull(timeline.selIdx) else null
+        if (a == null) { toast("Pilih blok audio (warna hijau) di timeline dulu"); return }
+        showFadeDialog("Fade audio: ${a.name}", a.fadeInMs, a.fadeOutMs, a.durMs) { i, o -> a.fadeInMs = i; a.fadeOutMs = o }
+    }
+
     // ---------- Volume ----------
     private fun applyVolume() {
-        val v = min(1f, clipAt(viewMs)?.volume ?: 1f)
+        var start = 0L
+        var cur: Clip? = null
+        for (cl in proj.clips) {
+            if (viewMs < start + cl.durMs) { cur = cl; break }
+            start += cl.durMs
+        }
+        if (cur == null && proj.clips.isNotEmpty()) {
+            cur = proj.clips.last()
+            start = proj.totalMs() - cur.durMs
+        }
+        val g = if (cur != null) AudioFades.gain(viewMs - start, cur.durMs, cur.afadeInMs, cur.afadeOutMs) else 1f
+        val v = min(1f, cur?.volume ?: 1f) * g
         if (player.volume != v) player.volume = v
     }
 
@@ -946,11 +992,13 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 pbtn("⟲ Reset zoom") { clipAt(viewMs)?.let { it.scale = 1f; it.tx = 0f; it.ty = 0f }; applyClipTransform() }
                 pbtn("🔊 Volume") { volumeForVideo() }
                 pbtn("🌓 Transisi") { chooseTransition() }
+                pbtn("🎚 Fade suara") { fadeForVideo() }
                 pbtn("+ Video") { pickVideo.launch(arrayOf("video/*")) }
             }
             2 -> {
                 pbtn("+ Audio") { pickAudio.launch(arrayOf("audio/*")) }
                 pbtn("🔊 Volume") { volumeForAudio() }
+                pbtn("🎚 Fade") { fadeForAudio() }
                 pbtn("✂ Potong") { splitAtPlayhead() }
                 pbtn("🗑 Hapus") { deleteSelected() }
             }

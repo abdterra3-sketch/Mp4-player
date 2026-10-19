@@ -74,6 +74,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     private var coverUri: Uri? = null
     private var coverSec = 2
     private var draftPending = false
+    private var errorRetries = 0
     private var mode = 0
     private var fullscreen = false
     private val undoStack = ArrayList<Snapshot>()
@@ -93,6 +94,9 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     private val pickVideo = registerForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { u -> persist(u); addVideo(u) } }
     private val pickAudio = registerForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { u -> persist(u); addAudio(u) } }
     private val pickOverlay = registerForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { u -> persist(u); addOverlay(u) } }
+    private var relinkIdx = -1
+    private var missingShowing = false
+    private val pickRelink = registerForActivityResult(ActivityResultContracts.OpenDocument()) { u -> if (u != null) { persist(u); relinkClip(u) } }
     private val pickCover = registerForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
         if (u != null) {
             persist(u)
@@ -128,10 +132,19 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         playerView.player = player
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                toast("Gagal memutar: ${error.errorCodeName}")
+                val idx = player.currentMediaItemIndex
+                val fileProblem = error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ||
+                    error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NO_PERMISSION
+                if (fileProblem && idx in proj.clips.indices) showMissingClipDialog(idx)
+                else if (errorRetries < 2) {
+                    // coba pulihkan otomatis (misalnya setelah layar HP dikunci lalu dibuka lagi)
+                    errorRetries++
+                    handler.postDelayed({ rebuildPlayer() }, 400)
+                } else toast("Gagal memutar: ${error.errorCodeName}")
             }
             override fun onIsPlayingChanged(isPlaying: Boolean) { btnPlay.text = if (isPlaying) "❚❚" else "▶" }
             override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_READY) errorRetries = 0
                 if (state == Player.STATE_ENDED) { player.pause(); curMs = proj.totalMs(); timeline.scrollToMs(curMs); updateAll() }
             }
         })
@@ -252,17 +265,20 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         applyPreviewEffects()
     }
 
-    private var fxApplied = false
-
+    /** Efek pratinjau memakai filter warna pada layar video (tanpa jalur GL), supaya stabil di semua HP. */
     private fun applyPreviewEffects() {
-        val list = buildEffects(effectIdx)
-        if (list.isEmpty() && !fxApplied) return
-        try {
-            player.setVideoEffects(list)
-            fxApplied = list.isNotEmpty()
-        } catch (e: Exception) {
-            toast("Efek pratinjau tidak didukung: ${e.message}")
+        val sv = playerView.videoSurfaceView as? android.view.TextureView ?: return
+        if (effectIdx == 0) { sv.setLayerType(View.LAYER_TYPE_NONE, null); return }
+        val m: FloatArray = when (effectIdx) {
+            1 -> floatArrayOf(0.299f, 0.587f, 0.114f, 0f, 0f, 0.299f, 0.587f, 0.114f, 0f, 0f, 0.299f, 0.587f, 0.114f, 0f, 0f, 0f, 0f, 0f, 1f, 0f)
+            2 -> floatArrayOf(0.393f, 0.769f, 0.189f, 0f, 0f, 0.349f, 0.686f, 0.168f, 0f, 0f, 0.272f, 0.534f, 0.131f, 0f, 0f, 0f, 0f, 0f, 1f, 0f)
+            3 -> floatArrayOf(1f, 0f, 0f, 0f, 50f, 0f, 1f, 0f, 0f, 50f, 0f, 0f, 1f, 0f, 50f, 0f, 0f, 0f, 1f, 0f)
+            4 -> floatArrayOf(1.4f, 0f, 0f, 0f, -51f, 0f, 1.4f, 0f, 0f, -51f, 0f, 0f, 1.4f, 0f, -51f, 0f, 0f, 0f, 1f, 0f)
+            else -> floatArrayOf(-1f, 0f, 0f, 0f, 255f, 0f, -1f, 0f, 0f, 255f, 0f, 0f, -1f, 0f, 255f, 0f, 0f, 0f, 1f, 0f)
         }
+        val paint = android.graphics.Paint()
+        paint.colorFilter = android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix(m))
+        sv.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
     }
 
     private fun buildEffects(i: Int): List<Effect> = when (i) {
@@ -306,13 +322,19 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         }
         val playing = player.isPlaying
         for (a in proj.audios) {
-            val mp = audioPlayers.getOrPut(a.id) {
-                try { MediaPlayer().apply { setDataSource(this@MainActivity, a.uri); prepare() } } catch (_: Exception) { return@getOrPut MediaPlayer() }
+            val inRange = curMs >= a.startMs && curMs < a.endMs
+            var mp = audioPlayers[a.id]
+            if (mp == null) {
+                // pemutar audio dibuat hanya saat benar-benar dibutuhkan, supaya aplikasi cepat dibuka
+                if (!(playing && inRange)) continue
+                mp = try {
+                    MediaPlayer().apply { setDataSource(this@MainActivity, a.uri); prepare() }
+                } catch (_: Exception) { MediaPlayer() }
+                audioPlayers[a.id] = mp
             }
             try {
                 val vol = min(1f, a.volume)
                 mp.setVolume(vol, vol)
-                val inRange = curMs >= a.startMs && curMs < a.endMs
                 if (playing && inRange) {
                     if (!mp.isPlaying) { mp.seekTo((a.inMs + curMs - a.startMs).toInt()); mp.start() }
                 } else if (mp.isPlaying) mp.pause()
@@ -753,6 +775,45 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         }
     }
 
+    // ---------- File klip hilang ----------
+    private fun canOpen(uri: Uri): Boolean = try {
+        contentResolver.openInputStream(uri)?.use { true } ?: false
+    } catch (_: Exception) { false }
+
+    private fun showMissingClipDialog(idx: Int) {
+        if (missingShowing) return
+        missingShowing = true
+        var start = 0L
+        for (i in 0 until idx) start += proj.clips[i].durMs
+        AlertDialog.Builder(this)
+            .setTitle("Klip tidak bisa dibuka")
+            .setMessage("Klip ke-${idx + 1} (mulai ${fmt(start)}) tidak bisa dibuka. File aslinya kemungkinan sudah dihapus, dipindah, atau izin aksesnya hilang.\n\nPilih file pengganti (semua potongan, teks, dan pengaturan tetap), atau hapus klip ini dari proyek.")
+            .setPositiveButton("Pilih file pengganti") { _, _ -> relinkIdx = idx; pickRelink.launch(arrayOf("video/*")) }
+            .setNegativeButton("Hapus klip") { _, _ ->
+                if (idx in proj.clips.indices) {
+                    pushUndo(); proj.clips.removeAt(idx)
+                    timeline.clearSelection(); afterChange()
+                }
+            }
+            .setNeutralButton("Nanti", null)
+            .setOnDismissListener { missingShowing = false }
+            .show()
+    }
+
+    private fun relinkClip(u: Uri) {
+        val idx = relinkIdx
+        val c = proj.clips.getOrNull(idx) ?: return
+        val d = durationOf(u)
+        if (d <= 0) { toast("File pengganti tidak bisa dibaca"); return }
+        pushUndo()
+        val out = minOf(c.outMs, d)
+        val inn = minOf(c.inMs, maxOf(0L, out - 300))
+        proj.clips[idx] = c.copy(uri = u, srcMs = d, inMs = inn, outMs = out)
+        timeline.refresh()
+        afterChange()
+        toast("Klip diganti dengan file baru")
+    }
+
     // ---------- Sampul ----------
     private fun onCoverClick() {
         if (coverUri == null) { pickCover.launch(arrayOf("image/*")); return }
@@ -1128,6 +1189,8 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
 
     private fun doExport() {
         if (proj.clips.isEmpty()) { toast("Belum ada video. Tekan + di timeline"); return }
+        val bad = proj.clips.indexOfFirst { !canOpen(it.uri) }
+        if (bad >= 0) { showMissingClipDialog(bad); return }
         if (Build.VERSION.SDK_INT < 29 &&
             checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
             permWrite.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE); return

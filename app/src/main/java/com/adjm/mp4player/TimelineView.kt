@@ -34,7 +34,7 @@ class ThumbLoader(private val ctx: Context) {
     private val main = Handler(Looper.getMainLooper())
 
     init {
-        repeat(2) {
+        repeat(1) {
             val worker = Thread {
                 while (true) {
                     val job = try { queue.takeLast() } catch (_: InterruptedException) { break }   // terbaru dikerjakan dulu
@@ -98,7 +98,7 @@ class ThumbView(
         val last = min(((w - 1) / tileW).toInt(), (vis.right / tileW).toInt() + 1)
         // muat juga kotak di sekitar layar lebih dulu; yang paling dekat tengah dikerjakan pertama
         val cx = (vis.left + vis.right) / 2f / tileW
-        val pre = ((first - 4)..(last + 4)).filter { it >= 0 && it * tileW < w }
+        val pre = ((first - 2)..(last + 2)).filter { it >= 0 && it * tileW < w }
         for (i in pre.sortedByDescending { abs(it - cx) }) {
             loader.get(clip.uri, min(clip.inMs + i * 1000L, clip.outMs - 1)) { invalidate() }
         }

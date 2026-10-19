@@ -323,14 +323,15 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         val playing = player.isPlaying
         for (a in proj.audios) {
             val inRange = curMs >= a.startMs && curMs < a.endMs
-            var mp = audioPlayers[a.id]
-            if (mp == null) {
+            val existing = audioPlayers[a.id]
+            val mp: MediaPlayer = if (existing != null) existing else {
                 // pemutar audio dibuat hanya saat benar-benar dibutuhkan, supaya aplikasi cepat dibuka
                 if (!(playing && inRange)) continue
-                mp = try {
+                val created = try {
                     MediaPlayer().apply { setDataSource(this@MainActivity, a.uri); prepare() }
                 } catch (_: Exception) { MediaPlayer() }
-                audioPlayers[a.id] = mp
+                audioPlayers[a.id] = created
+                created
             }
             try {
                 val vol = min(1f, a.volume)

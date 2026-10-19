@@ -862,24 +862,71 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     }
 
     // ---------- Fade audio ----------
-    private val fadeNames = arrayOf(
-        "Tanpa fade", "Masuk perlahan 1 dtk", "Keluar perlahan 1 dtk",
-        "Masuk + keluar 1 dtk", "Masuk + keluar 2 dtk", "Masuk + keluar 3 dtk"
-    )
-    private val fadeIns = longArrayOf(0, 1000, 0, 1000, 2000, 3000)
-    private val fadeOuts = longArrayOf(0, 0, 1000, 1000, 2000, 3000)
-
     private fun showFadeDialog(title: String, curIn: Long, curOut: Long, durMs: Long, onSet: (Long, Long) -> Unit) {
-        var cur = -1
-        for (i in fadeNames.indices) if (curIn == fadeIns[i] && curOut == fadeOuts[i]) cur = i
-        AlertDialog.Builder(this).setTitle(title)
-            .setSingleChoiceItems(fadeNames, cur) { d, which ->
+        val maxSteps = max(1, min(20, (durMs / 500).toInt()))      // langkah 0,5 detik, maksimal 10 detik
+        var inV = (curIn / 500).toInt().coerceIn(0, maxSteps)
+        var outV = (curOut / 500).toInt().coerceIn(0, maxSteps)
+
+        fun txt(v: Int) = if (v == 0) "tanpa" else "%.1f detik".format(v * 0.5f)
+        val l1 = TextView(this); l1.textSize = 16f; l1.setPadding(0, dp(10f), 0, dp(2f))
+        val l2 = TextView(this); l2.textSize = 16f; l2.setPadding(0, dp(14f), 0, dp(2f))
+        fun refreshLabels() {
+            l1.text = "Fade masuk: ${txt(inV)}"
+            l2.text = "Fade keluar: ${txt(outV)}"
+        }
+        val s1 = SeekBar(this); s1.max = maxSteps; s1.progress = inV
+        val s2 = SeekBar(this); s2.max = maxSteps; s2.progress = outV
+        s1.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) { inV = p; refreshLabels() }
+            override fun onStartTrackingTouch(s: SeekBar?) {}
+            override fun onStopTrackingTouch(s: SeekBar?) {}
+        })
+        s2.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) { outV = p; refreshLabels() }
+            override fun onStartTrackingTouch(s: SeekBar?) {}
+            override fun onStopTrackingTouch(s: SeekBar?) {}
+        })
+        refreshLabels()
+
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER
+        for ((name, sec) in listOf("Tanpa" to 0, "1 dtk" to 1, "2 dtk" to 2, "3 dtk" to 3, "5 dtk" to 5)) {
+            val b = TextView(this)
+            b.text = name
+            b.setPadding(dp(9f), dp(12f), dp(9f), dp(6f))
+            b.setOnClickListener {
+                val steps = min(sec * 2, maxSteps)
+                s1.progress = steps; s2.progress = steps
+            }
+            row.addView(b)
+        }
+        val hint = TextView(this)
+        hint.text = "Pintasan di atas mengisi fade masuk dan keluar sekaligus."
+        hint.textSize = 12f
+
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(dp(22f), dp(4f), dp(22f), 0)
+        box.addView(l1); box.addView(s1)
+        box.addView(l2); box.addView(s2)
+        box.addView(row); box.addView(hint)
+
+        AlertDialog.Builder(this).setTitle(title).setView(box)
+            .setPositiveButton("OK") { _, _ ->
+                var fi = inV * 500L
+                var fo = outV * 500L
+                if (fi + fo > durMs && fi + fo > 0) {            // jumlah keduanya tidak boleh melebihi durasi
+                    fi = fi * durMs / (fi + fo)
+                    fo = durMs - fi
+                }
                 pushUndo()
-                onSet(minOf(fadeIns[which], durMs / 2), minOf(fadeOuts[which], durMs / 2))
-                d.dismiss()
+                onSet(fi, fo)
                 timeline.refresh()
-                if (which != 0) toast("Fade terdengar saat diputar dan pada hasil Save")
-            }.show()
+                if (fi > 0 || fo > 0) toast("Fade terdengar saat diputar dan pada hasil Save")
+            }
+            .setNegativeButton("Batal", null)
+            .show()
     }
 
     private fun fadeForVideo() {

@@ -12,7 +12,8 @@ object AudioFades {
         var g = 1f
         if (fadeInMs > 0 && posMs < fadeInMs) g = minOf(g, max(0L, posMs).toFloat() / fadeInMs)
         if (fadeOutMs > 0 && durMs - posMs < fadeOutMs) g = minOf(g, max(0L, durMs - posMs).toFloat() / fadeOutMs)
-        return g.coerceIn(0f, 1f)
+        val c = g.coerceIn(0f, 1f)
+        return c * c   // kurva halus: fade terasa lebih panjang dan merata
     }
 }
 
@@ -43,9 +44,9 @@ class FadeGainProcessor(
         val totalFrames = durationUs * sr / 1_000_000L
         while (inputBuffer.remaining() >= 2 * ch) {
             var g = volume
-            if (fadeInFrames > 0 && frame < fadeInFrames) g *= frame.toFloat() / fadeInFrames
+            if (fadeInFrames > 0 && frame < fadeInFrames) { val f = frame.toFloat() / fadeInFrames; g *= f * f }
             val left = totalFrames - frame
-            if (fadeOutFrames > 0 && left < fadeOutFrames) g *= max(0L, left).toFloat() / fadeOutFrames
+            if (fadeOutFrames > 0 && left < fadeOutFrames) { val f = max(0L, left).toFloat() / fadeOutFrames; g *= f * f }
             for (i in 0 until ch) {
                 val s = inputBuffer.getShort().toInt()
                 val v = (s * g).toInt().coerceIn(-32768, 32767)

@@ -817,6 +817,146 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         toast("Klip diganti dengan file baru")
     }
 
+    // ---------- Teks otomatis dari suara narator (Gemini) ----------
+    private var subtitleCancel = false
+
+    private fun prefs() = getSharedPreferences("adjm_settings", MODE_PRIVATE)
+
+    private fun clipIndexAt(ms: Long): Int {
+        var base = 0L
+        for ((i, c) in proj.clips.withIndex()) {
+            if (ms < base + c.durMs) return i
+            base += c.durMs
+        }
+        return max(0, proj.clips.size - 1)
+    }
+
+    private fun askGeminiKey(onSaved: (() -> Unit)?) {
+        val p = prefs()
+        val key = EditText(this)
+        key.hint = "Tempel kunci API Gemini"
+        key.setSingleLine(true)
+        key.setText(p.getString("gemini_key", "") ?: "")
+        val model = EditText(this)
+        model.hint = "Nama model"
+        model.setSingleLine(true)
+        model.setText(p.getString("gemini_model", "gemini-2.5-flash") ?: "gemini-2.5-flash")
+        val info = TextView(this)
+        info.textSize = 13f
+        info.setPadding(0, dp(10f), 0, 0)
+        info.text = "Cara mendapat kunci: buka aistudio.google.com/apikey, masuk dengan akun Google, tekan Create API key, salin, lalu tempel di sini. Kunci hanya disimpan di HP ini.\n\nJika muncul error model tidak ditemukan, ganti nama model, misalnya gemini-2.5-flash atau gemini-flash-latest."
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(dp(22f), dp(8f), dp(22f), 0)
+        box.addView(key); box.addView(model); box.addView(info)
+        AlertDialog.Builder(this).setTitle("Kunci API Gemini").setView(box)
+            .setPositiveButton("Simpan") { _, _ ->
+                p.edit().putString("gemini_key", key.text.toString().trim())
+                    .putString("gemini_model", model.text.toString().trim().ifBlank { "gemini-2.5-flash" }).apply()
+                toast("Tersimpan")
+                if (key.text.toString().isNotBlank()) onSaved?.invoke()
+            }
+            .setNeutralButton("Hapus kunci") { _, _ -> p.edit().remove("gemini_key").apply(); toast("Kunci dihapus") }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    private fun startAutoSubtitle() {
+        if (proj.clips.isEmpty()) { toast("Tambahkan video dulu"); return }
+        val key = prefs().getString("gemini_key", "") ?: ""
+        if (key.isBlank()) { askGeminiKey { startAutoSubtitle() }; return }
+        val idx = if (timeline.selKind == TimelineView.VIDEO && timeline.selIdx in proj.clips.indices) timeline.selIdx else clipIndexAt(viewMs)
+        AlertDialog.Builder(this).setTitle("Teks otomatis (Inggris)")
+            .setMessage("Suara pada video akan dikirim ke layanan Gemini (Google) untuk dikenali lalu diterjemahkan ke bahasa Inggris. Butuh internet dan memakai kuota kunci API-mu.\n\nBlok teks baru dibuat di timeline sesuai waktu ucapan, dan bisa kamu edit.")
+            .setPositiveButton("Semua klip") { _, _ -> runAutoSubtitle(null) }
+            .setNeutralButton("Klip ${idx + 1} saja") { _, _ -> runAutoSubtitle(idx) }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    private fun runAutoSubtitle(only: Int?) {
+        val p = prefs()
+        val key = p.getString("gemini_key", "") ?: ""
+        val model = (p.getString("gemini_model", "gemini-2.5-flash") ?: "").ifBlank { "gemini-2.5-flash" }
+        val clips = proj.clips.map { it.copy() }
+        val starts = LongArray(clips.size)
+        var acc = 0L
+        for (i in clips.indices) { starts[i] = acc; acc += clips[i].durMs }
+        player.pause()
+        subtitleCancel = false
+
+        val msg = TextView(this)
+        msg.text = "Menyiapkan suara…"
+        msg.textSize = 15f
+        msg.setPadding(dp(8f), dp(12f), dp(8f), 0)
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.gravity = Gravity.CENTER_HORIZONTAL
+        box.setPadding(dp(24f), dp(16f), dp(24f), dp(8f))
+        box.addView(ProgressBar(this))
+        box.addView(msg)
+        val dlg = AlertDialog.Builder(this).setTitle("Teks otomatis").setView(box).setCancelable(false)
+            .setNegativeButton("Batal") { _, _ -> subtitleCancel = true }.create()
+        dlg.show()
+
+        Thread {
+            val found = ArrayList<TextItem>()
+            var error: String? = null
+            var noAudio = 0
+            var part = 0
+            try {
+                for (ci in clips.indices) {
+                    if (only != null && ci != only) continue
+                    if (subtitleCancel || error != null) break
+                    val c = clips[ci]
+                    val ok = PcmExtractor.extract(this, c.uri, c.inMs, c.outMs, 60000L, { subtitleCancel }) { chunkStart, pcm ->
+                        if (error == null && !subtitleCancel) {
+                            part++
+                            val label = "Klip ${ci + 1}: menganalisis bagian $part…"
+                            runOnUiThread { msg.text = label }
+                            val res = Gemini.transcribeTranslate(key, model, Wav.encode(pcm)) { subtitleCancel }
+                            if (res.error != null) {
+                                error = res.error
+                            } else {
+                                for (s in res.segs) {
+                                    val clipEnd = starts[ci] + c.durMs
+                                    val st = starts[ci] + chunkStart + (s.startSec * 1000).toLong()
+                                    if (st >= clipEnd) continue
+                                    var en = starts[ci] + chunkStart + (s.endSec * 1000).toLong()
+                                    if (en < st + 800) en = st + 800
+                                    if (en > clipEnd) en = clipEnd
+                                    if (en - st < 300) continue
+                                    found.add(TextItem(text = s.text, startMs = st, endMs = en, nx = 0.5f, ny = 0.82f, size = 0.055f, bgColor = 0xB3000000.toInt()))
+                                }
+                            }
+                        }
+                    }
+                    if (!ok) noAudio++
+                }
+            } catch (e: Exception) {
+                error = e.message ?: e.javaClass.simpleName
+            }
+            runOnUiThread {
+                dlg.dismiss()
+                finishAutoSubtitle(found, error, noAudio, subtitleCancel)
+            }
+        }.start()
+    }
+
+    private fun finishAutoSubtitle(found: List<TextItem>, error: String?, noAudio: Int, cancelled: Boolean) {
+        if (found.isNotEmpty()) {
+            pushUndo()
+            proj.texts.addAll(found)
+            timeline.refresh(); updateAll()
+        }
+        val sb = StringBuilder()
+        if (found.isNotEmpty()) sb.append("${found.size} teks bahasa Inggris ditambahkan ke timeline.")
+        if (cancelled) sb.append(if (sb.isEmpty()) "Dibatalkan." else "\nProses dibatalkan sebelum selesai.")
+        if (error != null) sb.append((if (sb.isNotEmpty()) "\n\n" else "") + "Masalah: $error")
+        if (found.isEmpty() && error == null && !cancelled) sb.append(if (noAudio > 0) "Klip tidak punya suara." else "Tidak ada ucapan yang terdeteksi.")
+        AlertDialog.Builder(this).setTitle("Teks otomatis").setMessage(sb.toString()).setPositiveButton("OK", null).show()
+    }
+
     // ---------- Sampul ----------
     private fun onCoverClick() {
         if (coverUri == null) { pickCover.launch(arrayOf("image/*")); return }
@@ -1057,6 +1197,8 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 pbtn("🎨 Warna") { chooseTextColor() }
                 pbtn("▭ Latar") { chooseBgColor() }
                 pbtn("◌ Outline") { chooseOutline() }
+                pbtn("🗣 Teks otomatis (Inggris)") { startAutoSubtitle() }
+                pbtn("🔑 Kunci Gemini") { askGeminiKey(null) }
                 pbtn("✂ Potong") { splitAtPlayhead() }
                 pbtn("🗑 Hapus") { deleteSelected() }
                 pbtn("A+") { resizeSelected(1.1f) }

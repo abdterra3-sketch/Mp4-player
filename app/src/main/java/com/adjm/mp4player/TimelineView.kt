@@ -19,6 +19,8 @@ import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ScrollView
 import android.widget.TextView
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -26,56 +28,95 @@ import kotlin.math.max
 import kotlin.math.min
 
 class ThumbLoader(private val ctx: Context) {
-    private class Job(val key: String, val uri: Uri, val ms: Long, val cb: () -> Unit)
+    private class Job(val uri: Uri, val times: List<Long>)
 
-    private val cache = LruCache<String, Bitmap>(400)
-    private val pending = HashSet<String>()                 // hanya dipakai di thread utama
-    private val queue = java.util.concurrent.LinkedBlockingDeque<Job>()
+    private val cache = LruCache<String, Bitmap>(500)
+    private val scheduled = HashSet<String>()                 // hanya dipakai di thread utama
+    private val queue = java.util.concurrent.LinkedBlockingQueue<Job>()
     private val main = Handler(Looper.getMainLooper())
+    private val dir = File(ctx.cacheDir, "thumbs").apply { mkdirs() }
+    var onUpdate: (() -> Unit)? = null
+    private var updatePending = false
 
-    init {
-        repeat(1) {
-            val worker = Thread {
-                while (true) {
-                    val job = try { queue.takeLast() } catch (_: InterruptedException) { break }   // terbaru dikerjakan dulu
-                    var bmp: Bitmap? = cache.get(job.key)
-                    if (bmp == null) {
-                        // cara utama: decoder langsung (frame tepat di waktunya)
-                        bmp = FrameGrabber.grab(ctx, job.uri, job.ms * 1000, 120)
-                        if (bmp == null) {
-                            // cadangan bila decoder gagal
-                            val r = MediaMetadataRetriever()
-                            try {
-                                r.setDataSource(ctx, job.uri)
-                                val f = r.getFrameAtTime(job.ms * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
-                                if (f != null) {
-                                    val h = 120
-                                    val w = max(1, f.width * h / f.height)
-                                    bmp = Bitmap.createScaledBitmap(f, w, h, true)
-                                }
-                            } catch (_: Exception) {
-                            } finally {
-                                try { r.release() } catch (_: Exception) {}
-                            }
-                        }
-                    }
-                    val result = bmp
-                    main.post {
-                        pending.remove(job.key)
-                        if (result != null) { cache.put(job.key, result); job.cb() }
-                    }
-                }
-            }
-            worker.isDaemon = true
-            worker.start()
-        }
+    private fun keyOf(uri: Uri, ms: Long) = "$uri@$ms"
+    private fun fileOf(uri: Uri, ms: Long) = File(dir, "${abs(uri.toString().hashCode())}_$ms.jpg")
+
+    private fun scheduleUpdate() {
+        if (updatePending) return
+        updatePending = true
+        main.postDelayed({ updatePending = false; onUpdate?.invoke() }, 120)
     }
 
+    private fun saveAndPost(uri: Uri, ms: Long, bmp: Bitmap) {
+        try {
+            FileOutputStream(fileOf(uri, ms)).use { bmp.compress(Bitmap.CompressFormat.JPEG, 75, it) }
+        } catch (_: Exception) {
+        }
+        main.post { cache.put(keyOf(uri, ms), bmp); scheduleUpdate() }
+    }
+
+    init {
+        val worker = Thread {
+            while (true) {
+                val job = try { queue.take() } catch (_: InterruptedException) { break }
+                val missing = job.times.filter { !fileOf(job.uri, it).exists() }
+                if (missing.isNotEmpty()) {
+                    // satu kali proses decoder untuk semua kotak yang belum ada
+                    val got = HashSet<Long>()
+                    FrameGrabber.grabMany(ctx, job.uri, missing.map { it * 1000 }, 120) { us, bmp ->
+                        val ms = us / 1000
+                        got.add(ms)
+                        saveAndPost(job.uri, ms, bmp)
+                    }
+                    // cadangan untuk kotak yang gagal
+                    for (ms in missing) {
+                        if (ms in got) continue
+                        val r = MediaMetadataRetriever()
+                        try {
+                            r.setDataSource(ctx, job.uri)
+                            val f = r.getFrameAtTime(ms * 1000, MediaMetadataRetriever.OPTION_CLOSEST)
+                            if (f != null) {
+                                val h = 120
+                                val w = max(1, f.width * h / f.height)
+                                saveAndPost(job.uri, ms, Bitmap.createScaledBitmap(f, w, h, true))
+                            }
+                        } catch (_: Exception) {
+                        } finally {
+                            try { r.release() } catch (_: Exception) {}
+                        }
+                    }
+                }
+                main.post { scheduleUpdate() }
+            }
+        }
+        worker.isDaemon = true
+        worker.start()
+    }
+
+    /** Dari memori, atau dari cache di penyimpanan (cepat saat draf dibuka lagi). */
     fun get(uri: Uri, ms: Long, onLoaded: () -> Unit): Bitmap? {
-        val key = "$uri@$ms"
+        val key = keyOf(uri, ms)
         cache.get(key)?.let { return it }
-        if (pending.add(key)) queue.putLast(Job(key, uri, ms, onLoaded))
+        val f = fileOf(uri, ms)
+        if (f.exists()) {
+            val b = BitmapFactory.decodeFile(f.absolutePath)
+            if (b != null) { cache.put(key, b); return b }
+        }
         return null
+    }
+
+    /** Menjadwalkan pembuatan semua kotak satu klip: sekitar posisi garis putih dulu, sisanya menyusul. */
+    fun ensureStrip(uri: Uri, inMs: Long, outMs: Long, centerMs: Long) {
+        val key = "$uri|$inMs|$outMs"
+        if (!scheduled.add(key)) return
+        val n = max(1, ceil((outMs - inMs) / 1000.0).toInt())
+        val all = (0 until n).map { min(inMs + it * 1000L, outMs - 1) }
+        val ci = ((centerMs - inMs) / 1000L).toInt().coerceIn(0, n - 1)
+        val range = (ci - 3)..(ci + 8)
+        val win = all.filterIndexed { i, _ -> i in range }
+        val rest = all.filterIndexed { i, _ -> i !in range }
+        queue.put(Job(uri, win))
+        if (rest.isNotEmpty()) queue.put(Job(uri, rest))
     }
 }
 
@@ -96,12 +137,8 @@ class ThumbView(
         val vis = c.clipBounds
         val first = max(0, (vis.left / tileW).toInt() - 1)
         val last = min(((w - 1) / tileW).toInt(), (vis.right / tileW).toInt() + 1)
-        // muat juga kotak di sekitar layar lebih dulu; yang paling dekat tengah dikerjakan pertama
-        val cx = (vis.left + vis.right) / 2f / tileW
-        val pre = ((first - 2)..(last + 2)).filter { it >= 0 && it * tileW < w }
-        for (i in pre.sortedByDescending { abs(it - cx) }) {
-            loader.get(clip.uri, min(clip.inMs + i * 1000L, clip.outMs - 1)) { invalidate() }
-        }
+        val cxMs = clip.inMs + (((vis.left + vis.right) / 2f / tileW) * 1000f).toLong()
+        loader.ensureStrip(clip.uri, clip.inMs, clip.outMs, cxMs)
         for (i in first..last) {
             val dst = RectF(i * tileW, 0f, min((i + 1) * tileW, w.toFloat()), h.toFloat())
             if (dst.width() <= 0f) continue
@@ -234,6 +271,10 @@ class TimelineView(ctx: Context, private val proj: Project, private val thumbs: 
     private val laneOf = HashMap<Int, Int>()
     private val sectionTop = IntArray(5)
     private val blocks = HashMap<Int, View>()
+
+    init {
+        thumbs.onUpdate = { for (v in blocks.values) if (v is ThumbView) v.invalidate() }
+    }
 
     private var touching = false
     private val snapRunnable = Runnable { snapEdges() }

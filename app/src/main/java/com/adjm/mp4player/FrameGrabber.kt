@@ -84,6 +84,74 @@ object FrameGrabber {
         }
     }
 
+    /**
+     * Mengambil banyak frame dalam SATU kali proses decoder (jauh lebih cepat daripada satu per satu).
+     * timesUs harus berurutan naik. Setiap frame yang berhasil dikirim lewat onFrame(waktuUs, bitmap).
+     */
+    fun grabMany(ctx: Context, uri: Uri, timesUs: List<Long>, targetH: Int, onFrame: (Long, Bitmap) -> Unit) {
+        if (timesUs.isEmpty()) return
+        val ex = MediaExtractor()
+        var codec: MediaCodec? = null
+        try {
+            ex.setDataSource(ctx, uri, null)
+            var track = -1
+            var fmt: MediaFormat? = null
+            for (i in 0 until ex.trackCount) {
+                val f = ex.getTrackFormat(i)
+                if (f.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true) { track = i; fmt = f; break }
+            }
+            if (track < 0 || fmt == null) return
+            val rotation = if (fmt.containsKey(MediaFormat.KEY_ROTATION)) fmt.getInteger(MediaFormat.KEY_ROTATION) else 0
+            ex.selectTrack(track)
+            ex.seekTo(timesUs[0], MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            val mime = fmt.getString(MediaFormat.KEY_MIME) ?: return
+            codec = MediaCodec.createDecoderByType(mime)
+            codec.configure(fmt, null, null, 0)
+            codec.start()
+
+            val info = MediaCodec.BufferInfo()
+            var inputDone = false
+            var idx = 0
+            val deadline = System.currentTimeMillis() + 90000
+            while (idx < timesUs.size && System.currentTimeMillis() < deadline) {
+                if (!inputDone) {
+                    val ii = codec.dequeueInputBuffer(5000)
+                    if (ii >= 0) {
+                        val buf = codec.getInputBuffer(ii)!!
+                        val n = ex.readSampleData(buf, 0)
+                        if (n < 0) {
+                            codec.queueInputBuffer(ii, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputDone = true
+                        } else {
+                            codec.queueInputBuffer(ii, 0, n, ex.sampleTime, 0)
+                            ex.advance()
+                        }
+                    }
+                }
+                val oi = codec.dequeueOutputBuffer(info, 5000)
+                if (oi >= 0) {
+                    val eos = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                    val pts = info.presentationTimeUs
+                    if (info.size > 0 && pts >= timesUs[idx] - 20000) {
+                        val img = codec.getOutputImage(oi)
+                        var bmp: Bitmap? = null
+                        if (img != null) { bmp = toBitmap(img, targetH, rotation); img.close() }
+                        if (bmp != null) {
+                            while (idx < timesUs.size && pts >= timesUs[idx] - 20000) { onFrame(timesUs[idx], bmp); idx++ }
+                        } else idx++
+                    }
+                    codec.releaseOutputBuffer(oi, false)
+                    if (eos) break
+                }
+            }
+        } catch (_: Exception) {
+        } finally {
+            try { codec?.stop() } catch (_: Exception) {}
+            try { codec?.release() } catch (_: Exception) {}
+            try { ex.release() } catch (_: Exception) {}
+        }
+    }
+
     private fun toBitmap(img: Image, targetH: Int, rotation: Int): Bitmap? {
         val crop = img.cropRect
         val w = crop.width() and 1.inv()

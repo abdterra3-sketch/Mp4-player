@@ -8,11 +8,13 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
+import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.OpenableColumns
 import android.text.InputType
 import android.util.TypedValue
@@ -91,18 +93,20 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     )
 
     // ---------- Pemilih file ----------
-    private val pickVideo = registerForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { u -> persist(u); addVideo(u) } }
-    private val pickAudio = registerForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { u -> persist(u); addAudio(u) } }
-    private val pickOverlay = registerForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { u -> persist(u); addOverlay(u) } }
+    private val pickVideo = registerForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { u -> importMedia(u, "clip") { c -> addVideo(c) } } }
+    private val pickAudio = registerForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { u -> val nm = nameOf(u); importMedia(u, "audio") { c -> addAudio(c, nm) } } }
+    private val pickOverlay = registerForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let { u -> importMedia(u, "img") { c -> addOverlay(c) } } }
     private var relinkIdx = -1
     private var missingShowing = false
-    private val pickRelink = registerForActivityResult(ActivityResultContracts.OpenDocument()) { u -> if (u != null) { persist(u); relinkClip(u) } }
+    private val pickRelink = registerForActivityResult(ActivityResultContracts.OpenDocument()) { u -> if (u != null) importMedia(u, "clip") { c -> relinkClip(c) } }
     private val pickCover = registerForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
-        if (u != null) {
-            persist(u)
-            coverUri = u; coverImg.setImageBitmap(decodeScaled(this, u, 200))
+        if (u != null) importMedia(u, "cover") { c ->
+            coverUri = c; coverImg.setImageBitmap(decodeScaled(this, c, 200))
             toast("Sampul akan tampil $coverSec detik di awal video hasil Save")
         }
+    }
+    private val permMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) startRecordFlow() else toast("Izin mikrofon diperlukan untuk merekam narasi")
     }
     private val permWrite = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         if (ok) startExport() else toast("Izin penyimpanan diperlukan untuk menyimpan ke galeri")
@@ -132,10 +136,10 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         playerView.player = player
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                val idx = player.currentMediaItemIndex
                 val fileProblem = error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ||
                     error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NO_PERMISSION
-                if (fileProblem && idx in proj.clips.indices) showMissingClipDialog(idx)
+                val bad = if (fileProblem) proj.clips.indexOfFirst { !canOpen(it.uri) } else -1
+                if (bad >= 0) showMissingClipDialog(bad)
                 else if (errorRetries < 2) {
                     // coba pulihkan otomatis (misalnya setelah layar HP dikunci lalu dibuka lagi)
                     errorRetries++
@@ -179,12 +183,17 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         if (Draft.exists(this)) offerDraft()
     }
 
-    override fun onPause() { super.onPause(); player.pause(); saveDraft() }
+    override fun onPause() {
+        super.onPause()
+        if (recorder != null || recDialog != null) stopRecording(true)
+        player.pause(); saveDraft()
+    }
 
     override fun onStop() { saveDraft(); super.onStop() }
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        try { recorder?.release() } catch (_: Exception) {}
         audioPlayers.values.forEach { try { it.release() } catch (_: Exception) {} }
         player.release()
         super.onDestroy()
@@ -320,6 +329,10 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         audioPlayers.keys.filter { it !in ids }.forEach { k ->
             audioPlayers.remove(k)?.let { try { it.release() } catch (_: Exception) {} }
         }
+        if (recording) {
+            for (mp in audioPlayers.values) { try { if (mp.isPlaying) mp.pause() } catch (_: Exception) {} }
+            return
+        }
         val playing = player.isPlaying
         for (a in proj.audios) {
             val inRange = curMs >= a.startMs && curMs < a.endMs
@@ -412,12 +425,12 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
 
     private fun spanEnd(): Long = curMs + 3000
 
-    private fun addAudio(uri: Uri) {
+    private fun addAudio(uri: Uri, name: String) {
         if (proj.totalMs() <= 0) { toast("Tambahkan video dulu"); return }
         val d = durationOf(uri)
         if (d <= 0) { toast("Audio tidak bisa dibaca"); return }
         pushUndo()
-        val a = AudioItem(uri = uri, name = nameOf(uri), srcMs = d, startMs = curMs)
+        val a = AudioItem(uri = uri, name = name, srcMs = d, startMs = curMs)
         proj.audios.add(a)
         timeline.refresh(); timeline.select(TimelineView.AUDIO, proj.audios.size - 1, false)
     }
@@ -633,6 +646,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         curMs = s.curMs.coerceIn(0L, proj.totalMs())
         resizeBox()
         afterChange()
+        migrateMedia()
         if (r.dropped > 0) toast("${r.dropped} file tidak bisa dibuka lagi (dihapus atau dipindah) dan dilewati")
     }
 
@@ -647,6 +661,8 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 timeline.clearSelection()
                 curMs = 0L; viewOverride = null
                 Draft.clear(this)
+                File(filesDir, "media").listFiles()?.forEach { it.delete() }
+                File(filesDir, "recordings").listFiles()?.forEach { it.delete() }
                 afterChange()
                 showMode(0)
             }.setNegativeButton("Batal", null).show()
@@ -778,6 +794,83 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         }
     }
 
+    // ---------- Salin file ke penyimpanan aplikasi (supaya stabil, tidak bergantung izin file asli) ----------
+    private fun extOf(uri: Uri, fallback: String): String {
+        val n = nameOf(uri)
+        val e = n.substringAfterLast('.', "").lowercase()
+        if (e.length in 2..4 && e.all { it.isLetterOrDigit() }) return e
+        val mime: String = (try { contentResolver.getType(uri) } catch (_: Exception) { null }) ?: return fallback
+        val sub = mime.substringAfter('/').substringBefore(';').lowercase()
+        return if (sub.length in 2..5) sub else fallback
+    }
+
+    private fun copyToLocal(uri: Uri, prefix: String): Uri? {
+        return try {
+            val fallbackExt = when (prefix) { "clip" -> "mp4"; "audio" -> "mp3"; else -> "png" }
+            val ext = extOf(uri, fallbackExt)
+            val dir = File(filesDir, "media")
+            dir.mkdirs()
+            val f = File(dir, "${prefix}_${System.currentTimeMillis()}_${(Math.random() * 100000).toInt()}.$ext")
+            var ok = false
+            contentResolver.openInputStream(uri)?.use { input ->
+                f.outputStream().use { input.copyTo(it, 256 * 1024) }
+                ok = true
+            }
+            if (ok && f.length() > 0) Uri.fromFile(f) else { f.delete(); null }
+        } catch (_: Exception) { null }
+    }
+
+    private fun progressDialog(message: String): AlertDialog {
+        val msg = TextView(this)
+        msg.text = message
+        msg.textSize = 15f
+        msg.setPadding(dp(24f), dp(20f), dp(24f), dp(20f))
+        val dlg = AlertDialog.Builder(this).setView(msg).setCancelable(false).create()
+        dlg.show()
+        return dlg
+    }
+
+    private fun importMedia(uri: Uri, prefix: String, onDone: (Uri) -> Unit) {
+        val dlg = progressDialog("Menyiapkan file…\nDisalin ke penyimpanan aplikasi supaya stabil.")
+        Thread {
+            val out = copyToLocal(uri, prefix)
+            runOnUiThread {
+                try { dlg.dismiss() } catch (_: Exception) {}
+                if (out == null) toast("Gagal menyalin file, memakai file asli (bisa kurang stabil)")
+                onDone(out ?: uri)
+            }
+        }.start()
+    }
+
+    /** Proyek lama yang masih memakai file asli dipindah ke salinan di penyimpanan aplikasi. */
+    private fun migrateMedia() {
+        val uris = ArrayList<Pair<Uri, String>>()
+        proj.clips.forEach { if (it.uri.scheme == "content") uris.add(Pair(it.uri, "clip")) }
+        proj.audios.forEach { if (it.uri.scheme == "content") uris.add(Pair(it.uri, "audio")) }
+        proj.overlays.forEach { if (it.uri.scheme == "content") uris.add(Pair(it.uri, "img")) }
+        val cover = coverUri
+        if (cover != null && cover.scheme == "content") uris.add(Pair(cover, "cover"))
+        if (uris.isEmpty()) return
+        val dlg = progressDialog("Merapikan ${uris.size} file proyek…\nDisalin ke penyimpanan aplikasi supaya stabil. Hanya sekali.")
+        Thread {
+            val map = HashMap<String, Uri>()
+            for ((u, prefix) in uris) {
+                if (map.containsKey(u.toString())) continue
+                copyToLocal(u, prefix)?.let { map[u.toString()] = it }
+            }
+            runOnUiThread {
+                for (i in proj.clips.indices) map[proj.clips[i].uri.toString()]?.let { proj.clips[i] = proj.clips[i].copy(uri = it) }
+                for (i in proj.audios.indices) map[proj.audios[i].uri.toString()]?.let { proj.audios[i] = proj.audios[i].copy(uri = it) }
+                for (i in proj.overlays.indices) map[proj.overlays[i].uri.toString()]?.let { proj.overlays[i] = proj.overlays[i].copy(uri = it) }
+                val cu = coverUri
+                if (cu != null) map[cu.toString()]?.let { coverUri = it }
+                try { dlg.dismiss() } catch (_: Exception) {}
+                afterChange()
+                saveDraft()
+            }
+        }.start()
+    }
+
     // ---------- File klip hilang ----------
     private fun canOpen(uri: Uri): Boolean = try {
         contentResolver.openInputStream(uri)?.use { true } ?: false
@@ -815,6 +908,131 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         timeline.refresh()
         afterChange()
         toast("Klip diganti dengan file baru")
+    }
+
+    // ---------- Rekam suara narator ----------
+    private var recorder: MediaRecorder? = null
+    private var recording = false
+    private var recFile: File? = null
+    private var recStartPos = 0L
+    private var recStartTime = 0L
+    private var recTick: Runnable? = null
+    private var recDialog: AlertDialog? = null
+
+    private fun startRecordFlow() {
+        if (proj.clips.isEmpty()) { toast("Tambahkan video dulu"); return }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permMic.launch(Manifest.permission.RECORD_AUDIO); return
+        }
+        AlertDialog.Builder(this).setTitle("Rekam narasi")
+            .setMessage("Rekaman dimulai dari posisi garis putih (${fmt(curMs)}) setelah hitung mundur 3 detik. Video ikut diputar tanpa suara aslinya supaya tidak ikut terekam, jadi kamu bisa berbicara mengikuti gambar.\n\nGunakan tempat tenang. Headset membantu bila ada musik.")
+            .setPositiveButton("Mulai rekam") { _, _ -> beginRecording() }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    private fun startRecorder(file: File): Boolean {
+        return try {
+            @Suppress("DEPRECATION")
+            val r = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else MediaRecorder()
+            r.setAudioSource(MediaRecorder.AudioSource.MIC)
+            r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            r.setAudioEncodingBitRate(128000)
+            r.setAudioSamplingRate(44100)
+            r.setOutputFile(file.absolutePath)
+            r.prepare()
+            r.start()
+            recorder = r
+            true
+        } catch (e: Exception) {
+            toast("Tidak bisa memulai rekaman: ${e.message}")
+            false
+        }
+    }
+
+    private fun beginRecording() {
+        player.pause()
+        recStartPos = curMs.coerceIn(0L, proj.totalMs())
+        val dir = File(filesDir, "recordings")
+        dir.mkdirs()
+        val file = File(dir, "rekaman_${System.currentTimeMillis()}.m4a")
+        recFile = file
+
+        val tv = TextView(this)
+        tv.textSize = 20f
+        tv.gravity = Gravity.CENTER
+        tv.setPadding(dp(20f), dp(26f), dp(20f), dp(14f))
+        val dlg = AlertDialog.Builder(this).setTitle("Merekam narasi").setView(tv).setCancelable(false)
+            .setPositiveButton("Selesai") { _, _ -> stopRecording(true) }
+            .setNegativeButton("Batal") { _, _ -> stopRecording(false) }
+            .create()
+        recDialog = dlg
+        dlg.show()
+
+        var count = 3
+        val runner = object : Runnable {
+            override fun run() {
+                if (recDialog == null) return
+                if (count > 0) {
+                    tv.text = "Bersiap… $count"
+                    count--
+                    handler.postDelayed(this, 1000)
+                    return
+                }
+                if (!recording) {
+                    if (!startRecorder(file)) { recDialog?.dismiss(); recDialog = null; recFile = null; return }
+                    recording = true
+                    recStartTime = SystemClock.elapsedRealtime()
+                    if (recStartPos < proj.totalMs() - 50) {
+                        viewOverride = null
+                        seekToTimeline(recStartPos)
+                        player.play()
+                    }
+                }
+                val el = SystemClock.elapsedRealtime() - recStartTime
+                tv.text = "● Merekam  ${fmt(el)}\n\nBicara sekarang. Tekan Selesai bila sudah."
+                handler.postDelayed(this, 250)
+            }
+        }
+        recTick = runner
+        handler.post(runner)
+    }
+
+    private fun stopRecording(save: Boolean) {
+        recTick?.let { handler.removeCallbacks(it) }
+        recTick = null
+        val r = recorder
+        recorder = null
+        var ok = false
+        if (recording && r != null) {
+            try { r.stop(); ok = true } catch (_: Exception) {}
+        }
+        try { r?.release() } catch (_: Exception) {}
+        val wasRecording = recording
+        recording = false
+        val dlg = recDialog
+        recDialog = null
+        try { dlg?.dismiss() } catch (_: Exception) {}
+        player.pause()
+        val f = recFile
+        recFile = null
+        if (f == null) return
+        if (!save || !ok) {
+            f.delete()
+            if (save && wasRecording) toast("Rekaman gagal disimpan")
+            return
+        }
+        val uri = Uri.fromFile(f)
+        val d = durationOf(uri)
+        if (d < 300) { f.delete(); toast("Rekaman terlalu singkat"); return }
+        pushUndo()
+        val n = proj.audios.count { it.name.startsWith("Rekaman") } + 1
+        proj.audios.add(AudioItem(uri = uri, name = "Rekaman $n", srcMs = d, startMs = recStartPos))
+        timeline.refresh()
+        timeline.select(TimelineView.AUDIO, proj.audios.size - 1, false)
+        updateAll()
+        toast("Rekaman ditambahkan di ${fmt(recStartPos)} (blok hijau di timeline)")
     }
 
     // ---------- Teks otomatis dari suara narator (Gemini) ----------
@@ -1083,6 +1301,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
 
     // ---------- Volume ----------
     private fun applyVolume() {
+        if (recording) { if (player.volume != 0f) player.volume = 0f; return }
         var start = 0L
         var cur: Clip? = null
         for (cl in proj.clips) {
@@ -1184,6 +1403,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             }
             2 -> {
                 pbtn("+ Audio") { pickAudio.launch(arrayOf("audio/*")) }
+                pbtn("🎙 Rekam narasi") { startRecordFlow() }
                 pbtn("🔊 Volume") { volumeForAudio() }
                 pbtn("🎚 Fade") { fadeForAudio() }
                 pbtn("✂ Potong") { splitAtPlayhead() }

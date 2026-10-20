@@ -143,7 +143,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 else if (errorRetries < 2) {
                     // coba pulihkan otomatis (misalnya setelah layar HP dikunci lalu dibuka lagi)
                     errorRetries++
-                    handler.postDelayed({ rebuildPlayer() }, 400)
+                    handler.postDelayed({ lastSig = ""; rebuildPlayer() }, 400)
                 } else toast("Gagal memutar: ${error.errorCodeName}")
             }
             override fun onIsPlayingChanged(isPlaying: Boolean) { btnPlay.text = if (isPlaying) "❚❚" else "▶" }
@@ -180,7 +180,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
 
         setupLayerGestures()
         handler.post(tick)
-        if (Draft.exists(this)) offerDraft()
+        if (Draft.exists(this)) offerDraft() else cleanupMedia()
     }
 
     override fun onPause() {
@@ -261,8 +261,19 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         }
     }
 
+    private var lastSig = ""
+
     private fun rebuildPlayer() {
-        if (proj.clips.isEmpty()) { player.clearMediaItems(); return }
+        if (proj.clips.isEmpty()) { player.clearMediaItems(); lastSig = ""; return }
+        // edit teks/audio/overlay tidak mengubah daftar klip: pemutar tidak perlu disiapkan ulang
+        val sig = proj.clips.joinToString(";") { "${it.uri}|${it.inMs}|${it.outMs}" }
+        if (sig == lastSig && player.mediaItemCount == proj.clips.size && player.playerError == null &&
+            player.playbackState != Player.STATE_IDLE) {
+            seekToTimeline(curMs)
+            applyPreviewEffects()
+            return
+        }
+        lastSig = sig
         val items = proj.clips.map {
             MediaItem.Builder().setUri(it.uri).setClippingConfiguration(
                 MediaItem.ClippingConfiguration.Builder().setStartPositionMs(it.inMs).setEndPositionMs(it.outMs).build()
@@ -629,7 +640,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             .setMessage("Ada draf sebelumnya: ${sum.first} klip video, durasi ${fmt(sum.second)}.\n\nLanjutkan mengedit draf ini?")
             .setCancelable(false)
             .setPositiveButton("Lanjutkan") { _, _ -> draftPending = false; restoreDraft() }
-            .setNegativeButton("Mulai baru") { _, _ -> Draft.clear(this); draftPending = false }
+            .setNegativeButton("Mulai baru") { _, _ -> Draft.clear(this); draftPending = false; cleanupMedia() }
             .show()
     }
 
@@ -842,6 +853,18 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         }.start()
     }
 
+    /** Menghapus salinan file impor yang tidak dipakai lagi (hanya dipanggil saat tumpukan undo kosong). */
+    private fun cleanupMedia() {
+        val files = File(filesDir, "media").listFiles() ?: return
+        val used = HashSet<String>()
+        fun add(u: Uri?) { if (u != null && u.scheme == "file") u.path?.let { used.add(it) } }
+        proj.clips.forEach { add(it.uri) }
+        proj.audios.forEach { add(it.uri) }
+        proj.overlays.forEach { add(it.uri) }
+        add(coverUri)
+        for (f in files) if (f.absolutePath !in used) f.delete()
+    }
+
     /** Proyek lama yang masih memakai file asli dipindah ke salinan di penyimpanan aplikasi. */
     private fun migrateMedia() {
         val uris = ArrayList<Pair<Uri, String>>()
@@ -850,7 +873,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         proj.overlays.forEach { if (it.uri.scheme == "content") uris.add(Pair(it.uri, "img")) }
         val cover = coverUri
         if (cover != null && cover.scheme == "content") uris.add(Pair(cover, "cover"))
-        if (uris.isEmpty()) return
+        if (uris.isEmpty()) { cleanupMedia(); return }
         val dlg = progressDialog("Merapikan ${uris.size} file proyek…\nDisalin ke penyimpanan aplikasi supaya stabil. Hanya sekali.")
         Thread {
             val map = HashMap<String, Uri>()
@@ -866,12 +889,18 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 if (cu != null) map[cu.toString()]?.let { coverUri = it }
                 try { dlg.dismiss() } catch (_: Exception) {}
                 afterChange()
+                cleanupMedia()
                 saveDraft()
             }
         }.start()
     }
 
     // ---------- File klip hilang ----------
+    private fun openError(uri: Uri): String? = try {
+        contentResolver.openInputStream(uri)?.close()
+        null
+    } catch (e: Exception) { e.message ?: e.javaClass.simpleName }
+
     private fun canOpen(uri: Uri): Boolean = try {
         contentResolver.openInputStream(uri)?.use { true } ?: false
     } catch (_: Exception) { false }
@@ -881,9 +910,10 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         missingShowing = true
         var start = 0L
         for (i in 0 until idx) start += proj.clips[i].durMs
+        val reason = openError(proj.clips[idx].uri)
         AlertDialog.Builder(this)
             .setTitle("Klip tidak bisa dibuka")
-            .setMessage("Klip ke-${idx + 1} (mulai ${fmt(start)}) tidak bisa dibuka. File aslinya kemungkinan sudah dihapus, dipindah, atau izin aksesnya hilang.\n\nPilih file pengganti (semua potongan, teks, dan pengaturan tetap), atau hapus klip ini dari proyek.")
+            .setMessage("Klip ke-${idx + 1} (mulai ${fmt(start)}) tidak bisa dibuka. File aslinya kemungkinan sudah dihapus, dipindah, atau izin aksesnya hilang.\n\nPilih file pengganti (semua potongan, teks, dan pengaturan tetap), atau hapus klip ini dari proyek." + (if (reason != null) "\n\nPenyebab teknis: $reason" else ""))
             .setPositiveButton("Pilih file pengganti") { _, _ -> relinkIdx = idx; pickRelink.launch(arrayOf("video/*")) }
             .setNegativeButton("Hapus klip") { _, _ ->
                 if (idx in proj.clips.indices) {
@@ -1407,7 +1437,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 pbtn("🔊 Volume") { volumeForAudio() }
                 pbtn("🎚 Fade") { fadeForAudio() }
                 pbtn("✂ Potong") { splitAtPlayhead() }
-                pbtn("🗑 Hapus") { deleteSelected() }
+                pbtn("?? Hapus") { deleteSelected() }
             }
             3 -> {
                 pbtn("+ Teks") { addText() }

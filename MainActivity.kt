@@ -3,8 +3,12 @@ package com.adjm.mp4player
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.drawable.GradientDrawable
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
@@ -56,6 +60,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
     private lateinit var box: FrameLayout
     private lateinit var layer: FrameLayout
     private lateinit var guide: GuideView
+    private lateinit var redLine: RedLineView
     private lateinit var tvTime: TextView
     private lateinit var btnPlay: TextView
     private lateinit var panelScroll: HorizontalScrollView
@@ -123,6 +128,11 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         box = findViewById(R.id.previewBox)
         layer = findViewById(R.id.layer)
         guide = findViewById(R.id.guide)
+        redLine = RedLineView(this, box)
+        holder.addView(redLine, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        redLine.fracY = prefs().getFloat("line_y", 0.82f)
+        redLine.onSettled = { v -> prefs().edit().putFloat("line_y", v).apply() }
+        redLine.visibility = View.GONE
         tvTime = findViewById(R.id.tvTime)
         btnPlay = findViewById(R.id.btnPlay)
         panelScroll = findViewById(R.id.panelScroll)
@@ -168,6 +178,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             fullscreen = !fullscreen
             editArea.visibility = if (fullscreen) View.GONE else View.VISIBLE
             findViewById<View>(R.id.header).visibility = if (fullscreen) View.GONE else View.VISIBLE
+            updateRedLine()
         }
         coverBox.setOnClickListener { onCoverClick() }
         findViewById<View>(R.id.bEdit).setOnClickListener { showMode(1) }
@@ -210,7 +221,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         if (lp.width != bw.toInt() || lp.height != bh.toInt()) {
             lp.width = bw.toInt(); lp.height = bh.toInt(); box.layoutParams = lp
         }
-        box.post { updateAll() }
+        box.post { redLine.invalidate(); updateAll() }
     }
 
     private fun outSize(): Pair<Int, Int> {
@@ -1415,8 +1426,14 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         panelRow.addView(t, lp)
     }
 
+    private fun updateRedLine() {
+        redLine.visibility = if (mode == 3 && !fullscreen) View.VISIBLE else View.GONE
+        redLine.invalidate()
+    }
+
     private fun showMode(m: Int) {
         mode = m
+        updateRedLine()
         if (m == 0) { panelScroll.visibility = View.GONE; bottomBar.visibility = View.VISIBLE; return }
         bottomBar.visibility = View.GONE; panelScroll.visibility = View.VISIBLE
         sizeLabel = null
@@ -1454,6 +1471,8 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 pbtn("🗑 Hapus") { deleteSelected() }
                 addSizeControl()
                 addNudge()
+                pbtn("Ke garis merah") { alignToLine(false) }
+                pbtn("Semua teks ke garis") { alignToLine(true) }
             }
             4 -> effectNames.forEachIndexed { i, n ->
                 pbtn((if (i == effectIdx) "✔ " else "") + n) { effectIdx = i; applyPreviewEffects(); showMode(4) }
@@ -1509,6 +1528,22 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
             TimelineView.TEXT -> proj.texts.getOrNull(timeline.selIdx)?.let { it.size = (it.size * f).coerceIn(0.02f, 0.3f) }
             TimelineView.OVERLAY -> proj.overlays.getOrNull(timeline.selIdx)?.let { it.size = (it.size * f).coerceIn(0.05f, 1f) }
             else -> toast("Pilih teks/overlay dulu")
+        }
+        syncOverlays()
+    }
+
+    /** Menaruh titik tengah teks tepat di garis merah (satu teks, atau semua teks sekaligus). */
+    private fun alignToLine(all: Boolean) {
+        val y = redLine.fracY
+        if (all) {
+            if (proj.texts.isEmpty()) { toast("Belum ada teks"); return }
+            pushUndo()
+            proj.texts.forEach { it.ny = y }
+        } else {
+            val t = selectedText()
+            if (t == null) { toast("Pilih blok teks dulu"); return }
+            pushUndo()
+            t.ny = y
         }
         syncOverlays()
     }
@@ -1671,6 +1706,10 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                     guide.snapY = abs(cy - h / 2) < th
                     if (guide.snapX) cx = w / 2
                     if (guide.snapY) cy = h / 2
+                    if (!guide.snapY && redLine.visibility == View.VISIBLE) {
+                        val ly = redLine.fracY * h
+                        if (abs(cy - ly) < th) cy = ly
+                    }
                     cx = cx.coerceIn(0f, w); cy = cy.coerceIn(0f, h)
                     view.x = cx - view.width / 2f; view.y = cy - view.height / 2f
                     val idx = indexOf(kind, id)
@@ -1831,5 +1870,125 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         } catch (e: Exception) {
             dlg.dismiss(); toast("Gagal memulai: ${e.message}")
         }
+    }
+}
+
+
+/**
+ * Garis merah panjang di layar utama = penanda batas lurus untuk semua teks narasi.
+ * Aktif hanya saat mode Teks. Tombol geser ada di kiri layar:
+ *  - kotak tengah  : diseret bebas ke atas / bawah
+ *  - segitiga atas / bawah : menggeser halus, 0,1% tinggi layar per sentuhan (ditahan = berulang)
+ * Angka di ujung garis = posisi garis dalam persen dari tepi atas layar utama.
+ */
+@SuppressLint("ClickableViewAccessibility")
+class RedLineView(ctx: Context, private val anchor: View) : View(ctx) {
+    /** Posisi garis: 0 = tepi atas layar utama, 1 = tepi bawah. */
+    var fracY = 0.82f
+        set(v) { field = v.coerceIn(0f, 1f); invalidate() }
+    var onSettled: ((Float) -> Unit)? = null
+
+    private val lineP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF1A1A.toInt(); strokeWidth = ctx.dp(1.5f).toFloat() }
+    private val fillP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
+    private val bgP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xCCFF1A1A.toInt(); style = Paint.Style.FILL }
+    private val txtP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE; textSize = ctx.dp(12f).toFloat()
+        typeface = android.graphics.Typeface.DEFAULT_BOLD; textAlign = Paint.Align.CENTER
+    }
+    private val path = Path()
+
+    private var drag = 0            // 0 tidak ada, 1 kotak tengah, 2 segitiga atas, 3 segitiga bawah
+    private var startY = 0f
+    private var startFrac = 0f
+    private var holds = 0
+    private var showValue = false
+
+    private val repeat = object : Runnable {
+        override fun run() {
+            if (drag != 2 && drag != 3) return
+            holds++
+            step(if (drag == 2) -1 else 1, if (holds > 15) 0.3f else 0.1f)
+            postDelayed(this, 60)
+        }
+    }
+    private val hideValue = Runnable { showValue = false; invalidate() }
+
+    private fun d(v: Float): Float = context.dp(v).toFloat()
+
+    private fun step(dir: Int, pct: Float) { fracY = fracY + dir * pct / 100f }
+
+    private fun lineY(): Float = anchor.top + anchor.translationY + fracY * anchor.height
+
+    /** Tombol di sebelah kiri layar utama; kalau tidak muat, masuk ke dalam layar utama. */
+    private fun handleCx(): Float {
+        val left = anchor.left + anchor.translationX
+        val cx = left - d(26f)
+        return if (cx - d(14f) < 0f) left + d(26f) else cx
+    }
+
+    private fun zone(x: Float, y: Float): Int {
+        if (abs(x - handleCx()) > d(22f)) return 0
+        val dy = y - lineY()
+        return when {
+            dy >= -d(14f) && dy <= d(14f) -> 1
+            dy < -d(14f) && dy >= -d(40f) -> 2
+            dy > d(14f) && dy <= d(40f) -> 3
+            else -> 0
+        }
+    }
+
+    override fun onDraw(c: Canvas) {
+        if (anchor.width <= 0 || anchor.height <= 0) return
+        val y = lineY()
+        val cx = handleCx()
+        val right = anchor.left + anchor.translationX + anchor.width
+        val x0 = cx + d(12f)
+        val x1 = minOf(width.toFloat(), right + d(24f))
+        c.drawLine(x0, y, x1, y, lineP)
+
+        path.reset()
+        path.moveTo(cx, y - d(32f)); path.lineTo(cx + d(11f), y - d(15f)); path.lineTo(cx - d(11f), y - d(15f)); path.close()
+        c.drawPath(path, fillP)
+        c.drawRoundRect(cx - d(11f), y - d(11f), cx + d(11f), y + d(11f), d(4f), d(4f), fillP)
+        path.reset()
+        path.moveTo(cx, y + d(32f)); path.lineTo(cx + d(11f), y + d(15f)); path.lineTo(cx - d(11f), y + d(15f)); path.close()
+        c.drawPath(path, fillP)
+
+        if (showValue) {
+            val s = String.format(java.util.Locale.US, "%.1f", fracY * 100f)
+            val tw = txtP.measureText(s) + d(14f)
+            val bx = (x1 - tw / 2f - d(6f)).coerceAtLeast(x0 + tw / 2f)
+            c.drawRoundRect(bx - tw / 2f, y - d(24f), bx + tw / 2f, y - d(5f), d(4f), d(4f), bgP)
+            c.drawText(s, bx, y - d(10f), txtP)
+        }
+    }
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                if (anchor.height <= 0) return false
+                val z = zone(e.x, e.y)
+                if (z == 0) return false           // di luar tombol: sentuhan diteruskan ke layar utama
+                drag = z; holds = 0
+                showValue = true
+                removeCallbacks(hideValue)
+                parent?.requestDisallowInterceptTouchEvent(true)
+                if (z == 1) { startY = e.y; startFrac = fracY }
+                else { step(if (z == 2) -1 else 1, 0.1f); postDelayed(repeat, 450) }
+                invalidate()
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (drag == 1 && anchor.height > 0) fracY = startFrac + (e.y - startY) / anchor.height
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(repeat)
+                if (drag != 0) { drag = 0; onSettled?.invoke(fracY); postDelayed(hideValue, 900) }
+                invalidate()
+                return true
+            }
+        }
+        return super.onTouchEvent(e)
     }
 }

@@ -1419,6 +1419,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         mode = m
         if (m == 0) { panelScroll.visibility = View.GONE; bottomBar.visibility = View.VISIBLE; return }
         bottomBar.visibility = View.GONE; panelScroll.visibility = View.VISIBLE
+        sizeLabel = null
         panelRow.removeAllViews()
         pbtn("⬅ Kembali") { showMode(0) }
         when (m) {
@@ -1451,8 +1452,7 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
                 pbtn("🔑 Kunci Gemini") { askGeminiKey(null) }
                 pbtn("✂ Potong") { splitAtPlayhead() }
                 pbtn("🗑 Hapus") { deleteSelected() }
-                pbtn("A+") { resizeSelected(1.1f) }
-                pbtn("A−") { resizeSelected(0.9f) }
+                addSizeControl()
                 addNudge()
             }
             4 -> effectNames.forEachIndexed { i, n ->
@@ -1513,10 +1513,90 @@ class MainActivity : AppCompatActivity(), TimelineView.Listener {
         syncOverlays()
     }
 
+    // ---------- Ukuran huruf dengan angka acuan ----------
+    private var sizeLabel: TextView? = null
+
+    /** Angka ukuran = ukuran teks x 100 (teks baru standarnya 7). */
+    private fun sizeText(v: Float): String {
+        val r = Math.round(v * 1000f) / 10f
+        return if (r == r.toInt().toFloat()) r.toInt().toString() else String.format(java.util.Locale.US, "%.1f", r)
+    }
+
+    private fun updateSizeLabel() {
+        val lb = sizeLabel ?: return
+        val t = selectedText()
+        val s = if (t == null) "–" else sizeText(t.size)
+        if (lb.text.toString() != s) lb.text = s
+    }
+
+    /** Naik / turun 1 angka. */
+    private fun stepTextSize(delta: Int) {
+        val t = selectedText()
+        if (t == null) { toast("Pilih blok teks dulu"); return }
+        val v = t.size * 100f
+        val nv = if (delta > 0) Math.floor((v + 0.001f).toDouble()) + 1 else Math.ceil((v - 0.001f).toDouble()) - 1
+        t.size = (nv.toFloat() / 100f).coerceIn(0.02f, 0.3f)
+        syncOverlays()
+    }
+
+    /** Ketik angka ukuran langsung. */
+    private fun askTextSize() {
+        val t = selectedText()
+        if (t == null) { toast("Pilih blok teks dulu"); return }
+        val et = EditText(this)
+        et.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+        et.setText(sizeText(t.size))
+        et.setSelection(et.text.length)
+        val note = TextView(this)
+        note.text = "Angka lebih besar = huruf lebih besar.\nRentang 2 sampai 30. Standar teks baru: 7."
+        note.textSize = 13f
+        note.setPadding(0, dp(8f), 0, 0)
+        val wrap = LinearLayout(this)
+        wrap.orientation = LinearLayout.VERTICAL
+        wrap.setPadding(dp(20f), dp(8f), dp(20f), 0)
+        wrap.addView(et)
+        wrap.addView(note)
+        AlertDialog.Builder(this).setTitle("Ukuran teks").setView(wrap)
+            .setPositiveButton("OK") { _, _ ->
+                val v = et.text.toString().replace(',', '.').toFloatOrNull()
+                if (v == null) {
+                    toast("Angka tidak valid")
+                } else {
+                    pushUndo()
+                    t.size = (v / 100f).coerceIn(0.02f, 0.3f)
+                    syncOverlays()
+                }
+            }.setNegativeButton("Batal", null).show()
+    }
+
+    /** Tombol  A−  [angka]  A+  di panel teks. */
+    private fun addSizeControl() {
+        pbtn("A−") { stepTextSize(-1) }
+        val n = TextView(this)
+        n.text = "–"
+        n.setTextColor(Color.WHITE)
+        n.textSize = 15f
+        n.gravity = Gravity.CENTER
+        n.setTypeface(null, android.graphics.Typeface.BOLD)
+        n.minWidth = dp(54f)
+        n.setPadding(dp(10f), dp(10f), dp(10f), dp(10f))
+        n.background = GradientDrawable().apply {
+            setColor(0xFF121212.toInt()); setStroke(dp(1.5f), 0xFF5A5A5A.toInt()); cornerRadius = dp(8f).toFloat()
+        }
+        n.setOnClickListener { askTextSize() }
+        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.setMargins(dp(4f), dp(6f), dp(4f), dp(6f))
+        panelRow.addView(n, lp)
+        sizeLabel = n
+        pbtn("A+") { stepTextSize(1) }
+        updateSizeLabel()
+    }
+
     // ---------- Teks & overlay di layar ----------
     private fun selBg() = GradientDrawable().apply { setColor(Color.TRANSPARENT); setStroke(dp(1.5f), Color.WHITE) }
 
     private fun syncOverlays() {
+        updateSizeLabel()
         val w = box.width; val h = box.height
         if (w == 0 || h == 0) return
 
